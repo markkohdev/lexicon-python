@@ -79,6 +79,23 @@ export LEXICON_HOST=localhost
 export LEXICON_PORT=48624
 ```
 
+## CLI
+
+A command-line interface is included for quick access to library queries without writing Python code.
+
+```bash
+# List all tracks
+lexicon list-tracks -f title -f artist -f bpm
+
+# List available fields
+lexicon list-fields track
+
+# Custom formatting and output formats
+lexicon list-tracks --format "{title} - {artist} [{bpm} BPM]" --output-format table
+```
+
+See [CLI Documentation](docs/CLI.md) for full command reference and examples.
+
 ## Validation Modes
 
 Many methods accept a `validation` parameter with three modes:
