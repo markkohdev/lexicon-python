@@ -16,11 +16,15 @@ authors = [
 dependencies = [
   "InquirerPy>=0.3",
   "requests>=2.31",
-  "typing_extensions>=4.0"
+  "typing_extensions>=4.0",
+  "typer>=0.9"
 ]
 
 [project.urls]
 Homepage = "https://github.com/photonicvelocity/lexicon-python"
+
+[project.scripts]
+lexicon = "lexicon.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

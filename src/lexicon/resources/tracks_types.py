@@ -1,9 +1,15 @@
 '''Types, structures, and validation for tracks'''
 
-from typing import Literal, Mapping, ReadOnly, Required, TypedDict, Optional, Sequence, get_args, cast
+from typing import Literal, Mapping, Required, TypedDict, Optional, Sequence, get_args, cast
 from datetime import date, datetime
 from dataclasses import dataclass, field
 import re
+
+import sys
+if sys.version_info >= (3, 13):
+    from typing import ReadOnly
+else:
+    from typing_extensions import ReadOnly
 
 from ._common_types import Color, _normalize_color
 
