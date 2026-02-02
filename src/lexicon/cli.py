@@ -2,7 +2,7 @@
 
 import json
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 
@@ -118,6 +118,80 @@ def _prompt_for_fields(
     
     return selected if selected else default_fields
 
+
+def _format_value(value: any) -> str:
+    """Convert a value to a string for display."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value) if value else ""
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, float) and value == int(value):
+        return str(int(value))
+    return str(value)
+
+
+def _format_table(
+    tracks: list[dict],
+    fields: list[str],
+    max_col_width: int = 30,
+) -> str:
+    """Format tracks as a simple ASCII table with column width limit."""
+    if not tracks:
+        return ""
+    
+    # Calculate column widths with a max limit
+    col_widths = {}
+    for field in fields:
+        max_val_width = max(
+            (len(_format_value(track.get(field, ""))) for track in tracks),
+            default=0,
+        )
+        col_widths[field] = min(max(len(field), max_val_width), max_col_width)
+    
+    def truncate(value: str, width: int) -> str:
+        """Truncate value to width, adding ... if needed."""
+        if len(value) > width:
+            return value[:width-3] + "..." if width > 3 else value[:width]
+        return value
+    
+    # Build header
+    header = " | ".join(field.ljust(col_widths[field]) for field in fields)
+    separator = "-+-".join("-" * col_widths[field] for field in fields)
+    
+    # Build rows
+    lines = [header, separator]
+    for track in tracks:
+        row = " | ".join(
+            truncate(_format_value(track.get(field, "")), col_widths[field]).ljust(col_widths[field])
+            for field in fields
+        )
+        lines.append(row)
+    
+    return "\n".join(lines)
+
+
+def _format_pairs(
+    tracks: list[dict],
+    fields: list[str],
+) -> str:
+    """Format tracks as key-value pairs (one track per block)."""
+    lines = []
+    for idx, track in enumerate(tracks, 1):
+        if idx > 1:
+            lines.append("")  # Blank line between tracks
+        track_id = track.get("id", "?")
+        lines.append(f"Track {idx} (ID: {track_id})")
+        lines.append("-" * 40)
+        for field in fields:
+            if field != "id":
+                value = _format_value(track.get(field, ""))
+                lines.append(f"  {field:20} {value}")
+    
+    return "\n".join(lines)
+
+
 app = typer.Typer(
     name="lexicon",
     help="Manage your Lexicon DJ library from the command line",
@@ -155,11 +229,18 @@ def list_tracks(
             help='Format string for output (e.g., "{title} - {artist} [{bpm} BPM]"). Overrides --field option.',
         ),
     ] = None,
+    output_format: Annotated[
+        Literal["compact", "table", "pairs", "json"],
+        typer.Option(
+            "--output-format",
+            help="Output format: compact (default), table, pairs (key-value), or json",
+        ),
+    ] = "compact",
     json_output: Annotated[
         bool,
         typer.Option(
             "--json",
-            help="Output tracks as JSON objects. Ignores --format option when enabled.",
+            help="Output tracks as JSON objects. Overrides --output-format. Ignores --format option.",
         ),
     ] = False,
 ) -> None:
@@ -172,7 +253,11 @@ def list_tracks(
     default_fields = ["title", "artist", "albumTitle"]
     suggested_fields = ["bpm", "key", "genre", "year"]
     
-    if json_output or not format_string:
+    # Override output format if --json is used
+    if json_output:
+        output_format = "json"
+    
+    if output_format == "json" or not format_string:
         # For JSON output or when no format string, use --field options or defaults
         if fields:
             display_fields = fields
@@ -199,18 +284,26 @@ def list_tracks(
         typer.echo("No tracks found.")
         return
     
-    # Display tracks
-    if json_output:
+    # Display tracks based on output format
+    if output_format == "json":
         # Create a list with only the requested fields
         output_tracks = []
         for track in tracks:
             filtered_track = {field: track.get(field) for field in display_fields}
             output_tracks.append(filtered_track)
         typer.echo(json.dumps(output_tracks, indent=2))
-    else:
+    elif output_format == "table":
         typer.echo(f"\nFound {len(tracks)} track(s):\n")
-        for track in tracks:
-            if format_string:
+        table_output = _format_table(tracks, display_fields)
+        typer.echo(table_output)
+    elif output_format == "pairs":
+        typer.echo(f"\nFound {len(tracks)} track(s):\n")
+        pairs_output = _format_pairs(tracks, display_fields)
+        typer.echo(pairs_output)
+    else:  # compact
+        if format_string:
+            typer.echo(f"\nFound {len(tracks)} track(s):\n")
+            for track in tracks:
                 # Prepare values for formatting
                 format_values = {}
                 for field in display_fields:
@@ -225,8 +318,10 @@ def list_tracks(
                     typer.echo(f"  {output}")
                 except KeyError as e:
                     typer.echo(f"  Error formatting track {track.get('id')}: Missing field {e}")
-            else:
-                # Always include ID first
+        else:
+            typer.echo(f"\nFound {len(tracks)} track(s):\n")
+            # Always include ID first
+            for track in tracks:
                 track_id = track.get("id", "N/A")
                 prefix = f"[{track_id}] "
                 parts = []
@@ -235,10 +330,8 @@ def list_tracks(
                 for field in display_fields:
                     if field == "id":
                         continue
-                    value = track.get(field, "N/A")
-                    if isinstance(value, list):
-                        value = ", ".join(str(v) for v in value) if value else "N/A"
-                    parts.append(str(value))
+                    value = _format_value(track.get(field, ""))
+                    parts.append(value)
                 
                 typer.echo(f"  {prefix}{' - '.join(parts)}")
 

@@ -12,7 +12,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from lexicon.cli import app, _prompt_for_fields  # noqa: E402
+from lexicon.cli import app, _prompt_for_fields, _format_value, _format_table, _format_pairs  # noqa: E402
 
 
 class TestCLI(unittest.TestCase):
@@ -625,5 +625,344 @@ class TestPromptForFields(unittest.TestCase):
         
         key_choice = next(c for c in captured_choices if c["value"] == "key")
         assert key_choice["enabled"] is False
+
+
+class TestFormatValue(unittest.TestCase):
+    """Tests for the _format_value helper function."""
+
+    def test_format_none(self):
+        """Test formatting None values."""
+        assert _format_value(None) == ""
+
+    def test_format_string(self):
+        """Test formatting string values."""
+        assert _format_value("test") == "test"
+
+    def test_format_integer(self):
+        """Test formatting integer values."""
+        assert _format_value(42) == "42"
+
+    def test_format_float_whole_number(self):
+        """Test formatting float values that are whole numbers."""
+        assert _format_value(42.0) == "42"
+
+    def test_format_float_decimal(self):
+        """Test formatting float values with decimals."""
+        assert _format_value(42.5) == "42.5"
+
+    def test_format_boolean_true(self):
+        """Test formatting boolean True."""
+        assert _format_value(True) == "Yes"
+
+    def test_format_boolean_false(self):
+        """Test formatting boolean False."""
+        assert _format_value(False) == "No"
+
+    def test_format_empty_list(self):
+        """Test formatting empty list."""
+        assert _format_value([]) == ""
+
+    def test_format_list_with_values(self):
+        """Test formatting list with values."""
+        assert _format_value(["a", "b", "c"]) == "a, b, c"
+
+    def test_format_list_with_mixed_types(self):
+        """Test formatting list with mixed types."""
+        assert _format_value(["a", 1, "b"]) == "a, 1, b"
+
+
+class TestFormatTable(unittest.TestCase):
+    """Tests for the _format_table helper function."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.sample_tracks = [
+            {
+                "id": 1,
+                "title": "Test Track",
+                "artist": "Test Artist",
+                "bpm": 128.5,
+            },
+            {
+                "id": 2,
+                "title": "Another Song",
+                "artist": "Different Artist",
+                "bpm": 140,
+            },
+        ]
+
+    def test_format_table_empty(self):
+        """Test formatting empty track list."""
+        result = _format_table([], ["title", "artist"])
+        assert result == ""
+
+    def test_format_table_basic(self):
+        """Test basic table formatting."""
+        result = _format_table(self.sample_tracks, ["id", "title", "bpm"])
+        
+        # Check for headers
+        lines = result.split("\n")
+        assert "id" in lines[0]
+        assert "title" in lines[0]
+        assert "bpm" in lines[0]
+        
+        # Check for separator
+        assert "-+-" in lines[1]
+        
+        # Check for data rows
+        assert "1" in result
+        assert "Test Track" in result
+        assert "128.5" in result
+
+    def test_format_table_column_width_limit(self):
+        """Test that long values are truncated."""
+        long_track = [
+            {
+                "id": 1,
+                "title": "This is a very long track title that should be truncated for display purposes",
+                "artist": "Artist",
+            }
+        ]
+        result = _format_table(long_track, ["id", "title", "artist"], max_col_width=20)
+        
+        # Check that the title is truncated
+        assert "..." in result  # Should contain truncation indicator
+        # The title should be truncated to 20 chars max
+        assert "This is a very lo" in result
+
+    def test_format_table_with_missing_fields(self):
+        """Test table formatting with missing fields in data."""
+        incomplete_track = [
+            {
+                "id": 1,
+                "title": "Test Track",
+                # artist is missing
+            }
+        ]
+        result = _format_table(incomplete_track, ["id", "title", "artist"])
+        
+        assert "Test Track" in result
+        # Missing field should show empty
+
+
+class TestFormatPairs(unittest.TestCase):
+    """Tests for the _format_pairs helper function."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.sample_tracks = [
+            {
+                "id": 1,
+                "title": "Test Track",
+                "artist": "Test Artist",
+                "bpm": 128,
+            },
+            {
+                "id": 2,
+                "title": "Another Song",
+                "artist": "Different Artist",
+                "bpm": 140,
+            },
+        ]
+
+    def test_format_pairs_empty(self):
+        """Test formatting empty track list."""
+        result = _format_pairs([], ["title", "artist"])
+        assert result == ""
+
+    def test_format_pairs_single_track(self):
+        """Test formatting single track in pairs format."""
+        result = _format_pairs(self.sample_tracks[:1], ["title", "artist", "bpm"])
+        
+        # Check structure
+        assert "Track 1" in result
+        assert "ID: 1" in result
+        assert "title" in result
+        assert "Test Track" in result
+        assert "artist" in result
+        assert "Test Artist" in result
+        assert "bpm" in result
+        assert "128" in result
+
+    def test_format_pairs_multiple_tracks(self):
+        """Test formatting multiple tracks in pairs format."""
+        result = _format_pairs(self.sample_tracks, ["title", "artist"])
+        
+        # Check both tracks are present
+        assert "Track 1" in result
+        assert "Track 2" in result
+        assert "Test Track" in result
+        assert "Another Song" in result
+        
+        # Check that tracks are separated (count "Track " to avoid matching "Test Track")
+        assert result.count("Track 1") == 1
+        assert result.count("Track 2") == 1
+
+    def test_format_pairs_skips_id_field(self):
+        """Test that id field is not duplicated in pairs format."""
+        result = _format_pairs(self.sample_tracks[:1], ["id", "title", "artist"])
+        
+        # id should appear only in header, not in field list
+        assert "ID: 1" in result
+        lines = result.split("\n")
+        # Find lines that contain "id" field (should be none after the header)
+        field_lines = [l for l in lines if l.strip().startswith("id")]
+        assert len(field_lines) == 0
+
+    def test_format_pairs_handles_missing_fields(self):
+        """Test pairs formatting with missing fields."""
+        incomplete_tracks = [
+            {
+                "id": 1,
+                "title": "Test Track",
+                # artist is missing
+            }
+        ]
+        result = _format_pairs(incomplete_tracks, ["title", "artist"])
+        
+        assert "Test Track" in result
+        # Missing field should appear with empty value
+
+
+class TestListTracksOutputFormats(unittest.TestCase):
+    """Tests for different output formats in list-tracks command."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+        self.sample_tracks = [
+            {
+                "id": 1,
+                "title": "Test Track",
+                "artist": "Test Artist",
+                "albumTitle": "Test Album",
+                "bpm": 128,
+                "key": "C Major",
+            },
+            {
+                "id": 2,
+                "title": "Another Song",
+                "artist": "Different Artist",
+                "albumTitle": "Different Album",
+                "bpm": 140,
+                "key": "D Minor",
+            },
+        ]
+
+    @patch("lexicon.cli.Lexicon")
+    def test_list_tracks_compact_format(self, mock_lexicon_class):
+        """Test list-tracks with compact output format."""
+        # Setup mock
+        mock_client = MagicMock()
+        mock_client.tracks.list.return_value = self.sample_tracks
+        mock_lexicon_class.return_value = mock_client
+
+        # Run command
+        result = self.runner.invoke(
+            app,
+            ["list-tracks", "-f", "title", "-f", "artist", "--output-format", "compact"]
+        )
+
+        # Verify
+        assert result.exit_code == 0
+        assert "[1] Test Track - Test Artist" in result.stdout
+        assert "[2] Another Song - Different Artist" in result.stdout
+
+    @patch("lexicon.cli.Lexicon")
+    def test_list_tracks_table_format(self, mock_lexicon_class):
+        """Test list-tracks with table output format."""
+        # Setup mock
+        mock_client = MagicMock()
+        mock_client.tracks.list.return_value = self.sample_tracks
+        mock_lexicon_class.return_value = mock_client
+
+        # Run command
+        result = self.runner.invoke(
+            app,
+            ["list-tracks", "-f", "title", "-f", "bpm", "--output-format", "table"]
+        )
+
+        # Verify
+        assert result.exit_code == 0
+        assert "title" in result.stdout
+        assert "bpm" in result.stdout
+        assert "Test Track" in result.stdout
+        assert "128" in result.stdout
+        assert "-+-" in result.stdout  # Table separator
+
+    @patch("lexicon.cli.Lexicon")
+    def test_list_tracks_pairs_format(self, mock_lexicon_class):
+        """Test list-tracks with pairs (key-value) output format."""
+        # Setup mock
+        mock_client = MagicMock()
+        mock_client.tracks.list.return_value = self.sample_tracks
+        mock_lexicon_class.return_value = mock_client
+
+        # Run command
+        result = self.runner.invoke(
+            app,
+            ["list-tracks", "-f", "title", "-f", "artist", "--output-format", "pairs"]
+        )
+
+        # Verify
+        assert result.exit_code == 0
+        assert "Track 1" in result.stdout
+        assert "Track 2" in result.stdout
+        assert "title" in result.stdout
+        assert "artist" in result.stdout
+        assert "Test Track" in result.stdout
+        assert "Test Artist" in result.stdout
+
+    @patch("lexicon.cli.Lexicon")
+    def test_list_tracks_json_via_flag(self, mock_lexicon_class):
+        """Test that --json flag overrides --output-format."""
+        # Setup mock
+        mock_client = MagicMock()
+        mock_client.tracks.list.return_value = self.sample_tracks
+        mock_lexicon_class.return_value = mock_client
+
+        # Run command with both --output-format and --json
+        result = self.runner.invoke(
+            app,
+            ["list-tracks", "-f", "title", "-f", "artist", "--output-format", "table", "--json"]
+        )
+
+        # Verify JSON output (--json should override --output-format)
+        assert result.exit_code == 0
+        import json
+        output = json.loads(result.stdout.split("Listing all tracks in the library...\n")[1])
+        assert isinstance(output, list)
+        assert len(output) == 2
+        assert output[0]["title"] == "Test Track"
+        assert output[0]["artist"] == "Test Artist"
+
+    @patch("lexicon.cli.Lexicon")
+    def test_list_tracks_format_string_with_fields(self, mock_lexicon_class):
+        """Test that --format string uses extracted fields for API call."""
+        # Setup mock
+        mock_client = MagicMock()
+        mock_client.tracks.list.return_value = self.sample_tracks
+        mock_lexicon_class.return_value = mock_client
+
+        # Run command with --format (without explicit --field options)
+        result = self.runner.invoke(
+            app,
+            [
+                "list-tracks",
+                "--format", "{title} by {artist}",
+            ]
+        )
+
+        # Verify format string is used
+        assert result.exit_code == 0
+        assert "Test Track by Test Artist" in result.stdout
+        assert "Another Song by Different Artist" in result.stdout
+        
+        # Verify that the fields from the format string were requested
+        call_args = mock_client.tracks.list.call_args
+        fields = call_args.kwargs["fields"]
+        assert "title" in fields
+        assert "artist" in fields
+
 
 
