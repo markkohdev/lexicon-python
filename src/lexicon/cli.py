@@ -1,5 +1,6 @@
 """CLI interface for Lexicon."""
 
+import json
 import re
 from typing import Annotated
 
@@ -7,6 +8,115 @@ import typer
 
 from lexicon.client import Lexicon
 from lexicon.resources.tracks_types import TrackField, TRACK_FIELDS, SORT_FIELDS
+
+
+def _prompt_for_fields(
+    default_fields: list[str],
+    suggested_fields: list[str] | None = None,
+) -> list[str] | None:
+    """Prompt user to select fields interactively.
+    
+    Parameters
+    ----------
+    default_fields
+        Fields to pre-select in the prompt. Appear first in the list.
+    suggested_fields
+        Optional fields to highlight after defaults (not pre-selected).
+    
+    Returns
+    -------
+    list[str] | None
+        Selected fields, or None if user cancels.
+    """
+    try:
+        from InquirerPy import prompt
+    except ImportError:  # pragma: no cover
+        typer.echo(
+            "InquirerPy is required for interactive field selection. "
+            "Install it with: pip install InquirerPy",
+            err=True,
+        )
+        typer.echo(f"Using default fields: {', '.join(default_fields)}")
+        return default_fields
+    
+    suggested_fields = suggested_fields or []
+    
+    # Build ordered list: defaults, suggested, then remaining
+    all_fields = [f for f in TRACK_FIELDS if f != "id"]
+    defaults_set = set(default_fields)
+    suggested_set = set(suggested_fields) - defaults_set
+    remaining_set = set(all_fields) - defaults_set - suggested_set
+    
+    # Build choices in order
+    choices = []
+    
+    # Add quick "use defaults" option at the top
+    choices.append(
+        {
+            "name": f"✓ Use defaults ({', '.join(default_fields)})",
+            "value": "__defaults__",
+            "enabled": False,
+        }
+    )
+    
+    # Add defaults (pre-selected)
+    for field in default_fields:
+        if field in all_fields:
+            choices.append(
+                {
+                    "name": field,
+                    "value": field,
+                    "enabled": True,
+                }
+            )
+    
+    # Add suggested fields (not pre-selected)
+    for field in suggested_fields:
+        if field in suggested_set:
+            choices.append(
+                {
+                    "name": field,
+                    "value": field,
+                    "enabled": False,
+                }
+            )
+    
+    # Add remaining fields (not pre-selected)
+    for field in all_fields:
+        if field in remaining_set:
+            choices.append(
+                {
+                    "name": field,
+                    "value": field,
+                    "enabled": False,
+                }
+            )
+    
+    result = prompt(
+        [
+            {
+                "type": "checkbox",
+                "name": "fields",
+                "message": "Select fields to display (space to toggle, enter to confirm):",
+                "choices": choices,
+                "validate": lambda x: len(x) > 0 or "Select at least one field",
+            }
+        ]
+    )
+    
+    if not isinstance(result, dict) or "fields" not in result:
+        return None
+    
+    selected = result["fields"]
+    
+    # Handle the quick defaults option
+    if "__defaults__" in selected:
+        return default_fields
+    
+    # Filter out the defaults option if user selected other fields
+    selected = [f for f in selected if f != "__defaults__"]
+    
+    return selected if selected else default_fields
 
 app = typer.Typer(
     name="lexicon",
@@ -45,6 +155,13 @@ def list_tracks(
             help='Format string for output (e.g., "{title} - {artist} [{bpm} BPM]"). Overrides --field option.',
         ),
     ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Output tracks as JSON objects. Ignores --format option when enabled.",
+        ),
+    ] = False,
 ) -> None:
     """List all tracks in the library."""
     typer.echo("Listing all tracks in the library...")
@@ -52,16 +169,27 @@ def list_tracks(
     client = Lexicon(host=host, port=port)
     
     # Determine which fields to fetch
-    if format_string:
+    default_fields = ["title", "artist", "albumTitle"]
+    suggested_fields = ["bpm", "key", "genre", "year"]
+    
+    if json_output or not format_string:
+        # For JSON output or when no format string, use --field options or defaults
+        if fields:
+            display_fields = fields
+        else:
+            # Prompt user interactively for fields
+            display_fields = _prompt_for_fields(default_fields, suggested_fields)
+            if display_fields is None:
+                typer.echo("Field selection cancelled.")
+                raise typer.Exit(1)
+    else:
         # Extract field names from format string
         field_pattern = re.compile(r'\{(\w+)\}')
         format_fields = field_pattern.findall(format_string)
-        display_fields = format_fields if format_fields else ["title", "artist", "albumTitle"]
-    else:
-        display_fields = fields if fields else ["title", "artist", "albumTitle"]
+        display_fields = format_fields if format_fields else default_fields
     
     # Always ensure id is included for fetching
-    fetch_fields: list[TrackField] = [f for f in display_fields if f != "id"]  # type: ignore
+    fetch_fields: list[TrackField] = display_fields  # type: ignore
     if "id" not in fetch_fields:
         fetch_fields.insert(0, "id")  # type: ignore
     
@@ -72,39 +200,47 @@ def list_tracks(
         return
     
     # Display tracks
-    typer.echo(f"\nFound {len(tracks)} track(s):\n")
-    for track in tracks:
-        if format_string:
-            # Prepare values for formatting
-            format_values = {}
-            for field in display_fields:
-                value = track.get(field, "N/A")
-                if isinstance(value, list):
-                    value = ", ".join(str(v) for v in value) if value else "N/A"
-                format_values[field] = value
-            
-            # Format and display
-            try:
-                output = format_string.format(**format_values)
-                typer.echo(f"  {output}")
-            except KeyError as e:
-                typer.echo(f"  Error formatting track {track.get('id')}: Missing field {e}")
-        else:
-            # Always include ID first
-            track_id = track.get("id", "N/A")
-            prefix = f"[{track_id}] "
-            parts = []
-            
-            # Add requested fields
-            for field in display_fields:
-                if field == "id":
-                    continue
-                value = track.get(field, "N/A")
-                if isinstance(value, list):
-                    value = ", ".join(str(v) for v in value) if value else "N/A"
-                parts.append(str(value))
-            
-            typer.echo(f"  {prefix}{' - '.join(parts)}")
+    if json_output:
+        # Create a list with only the requested fields
+        output_tracks = []
+        for track in tracks:
+            filtered_track = {field: track.get(field) for field in display_fields}
+            output_tracks.append(filtered_track)
+        typer.echo(json.dumps(output_tracks, indent=2))
+    else:
+        typer.echo(f"\nFound {len(tracks)} track(s):\n")
+        for track in tracks:
+            if format_string:
+                # Prepare values for formatting
+                format_values = {}
+                for field in display_fields:
+                    value = track.get(field, "N/A")
+                    if isinstance(value, list):
+                        value = ", ".join(str(v) for v in value) if value else "N/A"
+                    format_values[field] = value
+                
+                # Format and display
+                try:
+                    output = format_string.format(**format_values)
+                    typer.echo(f"  {output}")
+                except KeyError as e:
+                    typer.echo(f"  Error formatting track {track.get('id')}: Missing field {e}")
+            else:
+                # Always include ID first
+                track_id = track.get("id", "N/A")
+                prefix = f"[{track_id}] "
+                parts = []
+                
+                # Add requested fields
+                for field in display_fields:
+                    if field == "id":
+                        continue
+                    value = track.get(field, "N/A")
+                    if isinstance(value, list):
+                        value = ", ".join(str(v) for v in value) if value else "N/A"
+                    parts.append(str(value))
+                
+                typer.echo(f"  {prefix}{' - '.join(parts)}")
 
 
 @app.command("list-fields")
