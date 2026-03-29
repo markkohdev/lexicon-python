@@ -1,6 +1,6 @@
 """Output formatting utilities for CLI commands."""
 
-from typing import Any
+from typing import Any, Mapping
 
 
 def format_value(value: Any) -> str:
@@ -114,4 +114,34 @@ def format_pairs(
                 value = format_value(track.get(field, ""))
                 lines.append(f"  {field:20} {value}")
 
+    return "\n".join(lines)
+
+
+def display_diff(
+    track_id: int,
+    current: dict[str, object],
+    proposed: Mapping[str, object],
+) -> str:
+    """Format a before/after comparison for edited fields.
+
+    Parameters
+    ----------
+    track_id
+        Track identifier.
+    current
+        Current track data dict.
+    proposed
+        Dict of field names to new values.
+
+    Returns
+    -------
+    str
+        Formatted diff string.
+    """
+    lines = [f"Track {track_id}:"]
+    for field, new_value in proposed.items():
+        old_value = current.get(field, "")
+        lines.append(
+            f"  {field}:  {format_value(old_value)!r}  →  {format_value(new_value)!r}"
+        )
     return "\n".join(lines)

@@ -22,6 +22,7 @@ lexicon [COMMAND] [OPTIONS]
 
 - `list-tracks` — List all tracks in the library with customizable output
 - `list-fields` — Display available fields for entities (tracks, playlists, tags)
+- `update-track` — Update a single track's fields by ID
 
 ---
 
@@ -159,6 +160,74 @@ lexicon list-fields playlist
 
 ```bash
 lexicon list-fields tag
+```
+
+---
+
+## update-track
+
+Update a single track's fields by ID.
+
+### Syntax
+
+```bash
+lexicon update-track --id TRACK_ID [--set FIELD=VALUE ...] [--edits JSON] [OPTIONS]
+```
+
+### Options
+
+#### Connection Options
+
+- `--host TEXT` — Hostname or IP address for the Lexicon API (default: `localhost`)
+- `--port INTEGER` — API port number (default: `48624`)
+
+#### Edit Input (one required, mutually exclusive)
+
+- `--set TEXT` — Field edits as `FIELD=VALUE` (can be used multiple times)
+- `--edits TEXT` — Raw JSON string of edits (e.g. `'{"title": "New Title"}'`)
+
+#### Other Options
+
+- `--dry-run` — Preview changes without applying them (fetches current values and shows a diff)
+- `--output-format [pairs|json|compact]` — Output format for the updated track (default: `pairs`)
+
+### Editable Fields
+
+`title`, `artist`, `albumTitle`, `label`, `remixer`, `mix`, `composer`, `producer`, `grouping`, `lyricist`, `comment`, `key`, `genre`, `rating`, `color`, `year`, `playCount`, `trackNumber`, `energy`, `danceability`, `popularity`, `happiness`, `extra1`, `extra2`, `tags`, `tempomarkers`, `cuepoints`, `incoming`, `archived`
+
+### Examples
+
+#### Update fields with --set
+
+```bash
+lexicon update-track --id 843 --set title="Rinse & The Night" --set genre="Bass House"
+```
+
+#### Update fields with --edits JSON
+
+```bash
+lexicon update-track --id 843 --edits '{"title": "Rinse & The Night", "genre": "Bass House"}'
+```
+
+#### Preview changes without applying (dry run)
+
+```bash
+lexicon update-track --id 843 --set title="Rinse & The Night" --dry-run
+```
+
+Output:
+
+```
+Track 843:
+  title:  'Rinse & The Night [DanFX Mashup]'  →  'Rinse & The Night'
+
+Summary: 1 track, 1 field change(s) (dry run — no changes applied)
+```
+
+#### Get JSON output after update
+
+```bash
+lexicon update-track --id 843 --set genre="Tech House" --output-format json
 ```
 
 ---

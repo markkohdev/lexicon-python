@@ -2,7 +2,12 @@
 
 import unittest
 
-from lexicon.cli.formatting import format_value, format_table, format_pairs
+from lexicon.cli.formatting import (
+    format_value,
+    format_table,
+    format_pairs,
+    display_diff,
+)
 
 
 class TestFormatValue(unittest.TestCase):
@@ -200,3 +205,46 @@ class TestFormatPairs(unittest.TestCase):
 
         assert "Test Track" in result
         # Missing field should appear with empty value
+
+
+class TestDisplayDiff(unittest.TestCase):
+    """Tests for the display_diff helper function."""
+
+    def test_single_field_change(self):
+        """Test diff with one field changed."""
+        current = {"id": 1, "title": "Old Title", "artist": "Artist"}
+        proposed = {"title": "New Title"}
+
+        result = display_diff(1, current, proposed)
+
+        assert "Track 1:" in result
+        assert "title:" in result
+        assert "'Old Title'" in result
+        assert "'New Title'" in result
+        assert "→" in result
+
+    def test_multiple_field_changes(self):
+        """Test diff with several fields changed."""
+        current = {"id": 5, "title": "Song", "genre": "", "bpm": 120}
+        proposed = {"title": "New Song", "genre": "House"}
+
+        result = display_diff(5, current, proposed)
+
+        assert "Track 5:" in result
+        assert "title:" in result
+        assert "genre:" in result
+        lines = result.split("\n")
+        assert len(lines) == 3  # header + 2 field lines
+
+    def test_missing_current_field(self):
+        """Test diff when the current track lacks the proposed field."""
+        current = {"id": 10}
+        proposed = {"genre": "Techno"}
+
+        result = display_diff(10, current, proposed)
+
+        assert "Track 10:" in result
+        assert "genre:" in result
+        # Missing field defaults to empty string
+        assert "''" in result
+        assert "'Techno'" in result

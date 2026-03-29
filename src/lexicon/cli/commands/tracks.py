@@ -8,7 +8,12 @@ import typer
 
 from lexicon.client import Lexicon
 from lexicon.resources.tracks_types import TrackField
-from lexicon.cli.formatting import format_value, format_table, format_pairs
+from lexicon.cli.formatting import (
+    format_value,
+    format_table,
+    format_pairs,
+    display_diff,
+)
 from lexicon.cli.prompts import prompt_for_fields
 
 
@@ -150,3 +155,130 @@ def list_tracks(
                     parts.append(value)
 
                 typer.echo(f"  {prefix}{' - '.join(parts)}")
+
+
+def update_track(
+    track_id: Annotated[
+        int,
+        typer.Option(
+            "--id",
+            help="Track ID to update",
+        ),
+    ],
+    set_fields: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--set",
+            help='Field edits as FIELD=VALUE (repeatable, e.g. --set title="New Title")',
+        ),
+    ] = None,
+    edits_json: Annotated[
+        str | None,
+        typer.Option(
+            "--edits",
+            help='Raw JSON string of edits (e.g. \'{"title": "New Title"}\'). Mutually exclusive with --set.',
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Preview changes without applying them",
+        ),
+    ] = False,
+    host: Annotated[
+        str | None,
+        typer.Option(
+            "--host",
+            help="Hostname or IP for the Lexicon API",
+        ),
+    ] = None,
+    port: Annotated[
+        int | None,
+        typer.Option(
+            "--port",
+            help="API port number",
+        ),
+    ] = None,
+    output_format: Annotated[
+        Literal["pairs", "json", "compact"],
+        typer.Option(
+            "--output-format",
+            help="Output format for the updated track: pairs (default), json, or compact",
+        ),
+    ] = "pairs",
+) -> None:
+    """Update a single track's fields."""
+    has_set = set_fields is not None and len(set_fields) > 0
+    has_edits = edits_json is not None
+
+    if has_set and has_edits:
+        typer.echo("Error: --set and --edits are mutually exclusive.", err=True)
+        raise typer.Exit(1)
+    if not has_set and not has_edits:
+        typer.echo("Error: provide either --set or --edits.", err=True)
+        raise typer.Exit(1)
+
+    edits: dict[str, str] = {}
+    if has_set:
+        assert set_fields is not None
+        for pair in set_fields:
+            if "=" not in pair:
+                typer.echo(
+                    f"Error: invalid --set value (missing '='): {pair}", err=True
+                )
+                raise typer.Exit(1)
+            # Split on first '=' only — values may contain '=' (e.g. --set comment="a=b")
+            key, value = pair.split("=", 1)
+            edits[key.strip()] = value.strip()
+    else:
+        assert edits_json is not None
+        try:
+            parsed = json.loads(edits_json)
+        except json.JSONDecodeError as exc:
+            typer.echo(f"Error: invalid JSON in --edits: {exc}", err=True)
+            raise typer.Exit(1)
+        if not isinstance(parsed, dict):
+            typer.echo("Error: --edits must be a JSON object.", err=True)
+            raise typer.Exit(1)
+        # Keys become strings; values stay as parsed (int, str, etc.) —
+        # the SDK's _normalize_edits handles type coercion per field.
+        edits = {str(k): v for k, v in parsed.items()}
+
+    if not edits:
+        typer.echo("Error: no edits provided.", err=True)
+        raise typer.Exit(1)
+
+    client = Lexicon(host=host, port=port)
+
+    if dry_run:
+        current_track = client.tracks.get(track_id)
+        if current_track is None:
+            typer.echo(f"Error: track {track_id} not found.", err=True)
+            raise typer.Exit(1)
+        typer.echo(display_diff(track_id, current_track, edits))
+        typer.echo(
+            f"\nSummary: 1 track, {len(edits)} field change(s) (dry run — no changes applied)"
+        )
+        return
+
+    result = client.tracks.update(track_id, edits)
+
+    if result is None:
+        typer.echo(f"Error: failed to update track {track_id}.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Track {track_id} updated successfully.\n")
+
+    # Only show the edited fields (plus id) rather than the full track response
+    if output_format == "json":
+        filtered = {field: result.get(field) for field in edits}
+        filtered["id"] = result.get("id")
+        typer.echo(json.dumps(filtered, indent=2))
+    elif output_format == "pairs":
+        display_fields = ["id"] + [f for f in edits if f != "id"]
+        typer.echo(format_pairs([result], display_fields))
+    else:  # compact
+        track_id_val = result.get("id", "N/A")
+        parts = [format_value(result.get(f, "")) for f in edits if f != "id"]
+        typer.echo(f"  [{track_id_val}] {' - '.join(parts)}")

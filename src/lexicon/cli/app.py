@@ -2,7 +2,7 @@
 
 import typer
 
-from lexicon.cli.commands import list_tracks, list_fields
+from lexicon.cli.commands import list_tracks, list_fields, update_track
 
 
 app = typer.Typer(
@@ -14,6 +14,7 @@ app = typer.Typer(
 # Register commands
 app.command("list-tracks")(list_tracks)
 app.command("list-fields")(list_fields)
+app.command("update-track")(update_track)
 
 
 def main() -> None:
