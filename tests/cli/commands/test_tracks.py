@@ -571,3 +571,502 @@ class TestUpdateTrack(unittest.TestCase):
 
         assert result.exit_code == 0
         mock_lexicon_class.assert_called_once_with(host="192.168.1.100", port=9999)
+
+
+class TestBulkUpdate(unittest.TestCase):
+    """Tests for the bulk-update CLI command."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    # --- File parsing: JSON array ---
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_json_array_file(self, mock_lexicon_class):
+        """Test parsing a JSON array edits file."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.side_effect = [
+            {"id": 843, "title": "New Title", "genre": "Bass House"},
+            {"id": 844, "artist": "ZHU ft. 24kGoldn"},
+        ]
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps(
+            [
+                {"id": 843, "title": "New Title", "genre": "Bass House"},
+                {"id": 844, "artist": "ZHU ft. 24kGoldn"},
+            ]
+        )
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "edits.json"])
+
+        assert result.exit_code == 0
+        assert "Updated 2/2" in result.output
+        assert mock_client.tracks.update.call_count == 2
+
+    # --- File parsing: JSONL ---
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_jsonl_file(self, mock_lexicon_class):
+        """Test parsing a JSONL edits file."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.side_effect = [
+            {"id": 843, "title": "New Title"},
+            {"id": 844, "artist": "ZHU"},
+        ]
+        mock_lexicon_class.return_value = mock_client
+
+        lines = [
+            '{"id": 843, "title": "New Title"}',
+            '{"id": 844, "artist": "ZHU"}',
+        ]
+
+        with self.runner.isolated_filesystem():
+            with open("edits.jsonl", "w") as f:
+                f.write("\n".join(lines))
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "edits.jsonl"])
+
+        assert result.exit_code == 0
+        assert "Updated 2/2" in result.output
+        assert mock_client.tracks.update.call_count == 2
+
+    # --- File parsing: stdin ---
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_stdin_input(self, mock_lexicon_class):
+        """Test reading edits from stdin via --file -."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.return_value = {"id": 843, "title": "New"}
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps([{"id": 843, "title": "New"}])
+
+        result = self.runner.invoke(app, ["bulk-update", "--file", "-"], input=edits)
+
+        assert result.exit_code == 0
+        assert "Updated 1/1" in result.output
+
+    # --- Validation errors ---
+
+    def test_empty_file(self):
+        """Test error on empty edits file."""
+        with self.runner.isolated_filesystem():
+            with open("empty.json", "w") as f:
+                f.write("")
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "empty.json"])
+
+        assert result.exit_code == 1
+        assert "empty" in result.output
+
+    def test_file_not_found(self):
+        """Test error when edits file doesn't exist."""
+        result = self.runner.invoke(app, ["bulk-update", "--file", "nonexistent.json"])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_invalid_json(self):
+        """Test error on invalid JSON."""
+        with self.runner.isolated_filesystem():
+            with open("bad.json", "w") as f:
+                f.write("{bad json}")
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "bad.json"])
+
+        assert result.exit_code == 1
+        assert "invalid JSON" in result.output
+
+    def test_missing_id_field(self):
+        """Test error when an entry is missing the id field."""
+        edits = json.dumps([{"title": "No ID here"}])
+
+        with self.runner.isolated_filesystem():
+            with open("noid.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "noid.json"])
+
+        assert result.exit_code == 1
+        assert "missing required 'id'" in result.output
+
+    def test_non_integer_id(self):
+        """Test error when id is not an integer."""
+        edits = json.dumps([{"id": "abc", "title": "Bad"}])
+
+        with self.runner.isolated_filesystem():
+            with open("badid.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "badid.json"])
+
+        assert result.exit_code == 1
+        assert "non-integer" in result.output
+
+    def test_entry_with_no_edit_fields(self):
+        """Test error when entry has id but no edit fields."""
+        edits = json.dumps([{"id": 843}])
+
+        with self.runner.isolated_filesystem():
+            with open("noedit.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "noedit.json"])
+
+        assert result.exit_code == 1
+        assert "no edit fields" in result.output
+
+    def test_entry_not_object(self):
+        """Test error when an entry is not a JSON object."""
+        edits = json.dumps(["not an object"])
+
+        with self.runner.isolated_filesystem():
+            with open("notobj.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "notobj.json"])
+
+        assert result.exit_code == 1
+        assert "not a JSON object" in result.output
+
+    def test_empty_json_array(self):
+        """Test error on empty JSON array."""
+        with self.runner.isolated_filesystem():
+            with open("empty_arr.json", "w") as f:
+                f.write("[]")
+
+            result = self.runner.invoke(
+                app, ["bulk-update", "--file", "empty_arr.json"]
+            )
+
+        assert result.exit_code == 1
+        assert "no entries" in result.output
+
+    def test_jsonl_invalid_line(self):
+        """Test error on invalid JSON within a JSONL file."""
+        lines = '{"id": 843, "title": "Good"}\n{bad line}'
+
+        with self.runner.isolated_filesystem():
+            with open("bad.jsonl", "w") as f:
+                f.write(lines)
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "bad.jsonl"])
+
+        assert result.exit_code == 1
+        assert "line 2" in result.output
+
+    # --- Dry-run ---
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_dry_run_shows_diff_no_update(self, mock_lexicon_class):
+        """Test --dry-run shows diff and makes no update calls."""
+        mock_client = MagicMock()
+        mock_client.tracks.get_many.return_value = [
+            {"id": 843, "title": "Old Title", "genre": ""},
+            {"id": 844, "artist": "Zhu ft 24kgoldn"},
+        ]
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps(
+            [
+                {"id": 843, "title": "New Title", "genre": "Bass House"},
+                {"id": 844, "artist": "ZHU ft. 24kGoldn"},
+            ]
+        )
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(
+                app, ["bulk-update", "--file", "edits.json", "--dry-run"]
+            )
+
+        assert result.exit_code == 0
+        assert "Track 843:" in result.output
+        assert "Old Title" in result.output
+        assert "New Title" in result.output
+        assert "Bass House" in result.output
+        assert "Track 844:" in result.output
+        assert "ZHU ft. 24kGoldn" in result.output
+        assert "dry run" in result.output
+        assert "3 field change(s)" in result.output
+        mock_client.tracks.update.assert_not_called()
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_dry_run_track_not_found(self, mock_lexicon_class):
+        """Test --dry-run when a track is not found."""
+        mock_client = MagicMock()
+        mock_client.tracks.get_many.return_value = [None]
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps([{"id": 999, "title": "New"}])
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(
+                app, ["bulk-update", "--file", "edits.json", "--dry-run"]
+            )
+
+        assert result.exit_code == 0
+        assert "not found" in result.output
+        mock_client.tracks.update.assert_not_called()
+
+    # --- Apply mode ---
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_apply_all_succeed(self, mock_lexicon_class):
+        """Test successful bulk update of all tracks."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.side_effect = [
+            {"id": 843, "title": "A"},
+            {"id": 844, "title": "B"},
+            {"id": 845, "title": "C"},
+        ]
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps(
+            [
+                {"id": 843, "title": "A"},
+                {"id": 844, "title": "B"},
+                {"id": 845, "title": "C"},
+            ]
+        )
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "edits.json"])
+
+        assert result.exit_code == 0
+        assert "Updated 3/3 track(s) successfully" in result.output
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_apply_stops_on_first_error(self, mock_lexicon_class):
+        """Test that apply mode stops on first failure by default."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.side_effect = [
+            {"id": 843, "title": "A"},
+            None,  # second fails
+            {"id": 845, "title": "C"},  # should not be reached
+        ]
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps(
+            [
+                {"id": 843, "title": "A"},
+                {"id": 844, "title": "B"},
+                {"id": 845, "title": "C"},
+            ]
+        )
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "edits.json"])
+
+        assert result.exit_code == 0
+        assert "1/2" in result.output
+        assert "1 failed" in result.output
+        assert mock_client.tracks.update.call_count == 2
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_continue_on_error(self, mock_lexicon_class):
+        """Test --continue-on-error continues after failures."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.side_effect = [
+            {"id": 843, "title": "A"},
+            None,  # second fails
+            {"id": 845, "title": "C"},
+        ]
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps(
+            [
+                {"id": 843, "title": "A"},
+                {"id": 844, "title": "B"},
+                {"id": 845, "title": "C"},
+            ]
+        )
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(
+                app,
+                ["bulk-update", "--file", "edits.json", "--continue-on-error"],
+            )
+
+        assert result.exit_code == 0
+        assert "2/3" in result.output
+        assert "1 failed" in result.output
+        assert mock_client.tracks.update.call_count == 3
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_continue_on_error_with_exception(self, mock_lexicon_class):
+        """Test --continue-on-error handles exceptions from update."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.side_effect = [
+            Exception("network error"),
+            {"id": 844, "title": "B"},
+        ]
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps(
+            [
+                {"id": 843, "title": "A"},
+                {"id": 844, "title": "B"},
+            ]
+        )
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(
+                app,
+                ["bulk-update", "--file", "edits.json", "--continue-on-error"],
+            )
+
+        assert result.exit_code == 0
+        assert "1/2" in result.output
+        assert "1 failed" in result.output
+        assert "network error" in result.output
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_exception_stops_without_continue_on_error(self, mock_lexicon_class):
+        """Test that exceptions stop processing without --continue-on-error."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.side_effect = Exception("network error")
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps(
+            [
+                {"id": 843, "title": "A"},
+                {"id": 844, "title": "B"},
+            ]
+        )
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(app, ["bulk-update", "--file", "edits.json"])
+
+        assert result.exit_code == 0
+        assert "0/1" in result.output or "1 failed" in result.output
+        assert mock_client.tracks.update.call_count == 1
+
+    # --- Output formats ---
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_json_output_format(self, mock_lexicon_class):
+        """Test --output-format json."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.return_value = {"id": 843, "title": "New"}
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps([{"id": 843, "title": "New"}])
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(
+                app,
+                ["bulk-update", "--file", "edits.json", "--output-format", "json"],
+            )
+
+        assert result.exit_code == 0
+        output = json.loads(result.output.rsplit("Updated", 1)[0].strip())
+        assert isinstance(output, list)
+        assert output[0]["status"] == "ok"
+        assert output[0]["id"] == 843
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_table_output_format(self, mock_lexicon_class):
+        """Test --output-format table shows diff view."""
+        mock_client = MagicMock()
+        mock_client.tracks.get_many.return_value = [
+            {"id": 843, "title": "Old Title"},
+        ]
+        mock_client.tracks.update.return_value = {"id": 843, "title": "New Title"}
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps([{"id": 843, "title": "New Title"}])
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(
+                app,
+                ["bulk-update", "--file", "edits.json", "--output-format", "table"],
+            )
+
+        assert result.exit_code == 0
+        assert "Track 843:" in result.output
+        assert "Old Title" in result.output
+        assert "New Title" in result.output
+
+    # --- Connection options ---
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_host_and_port(self, mock_lexicon_class):
+        """Test --host and --port forwarded to client."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.return_value = {"id": 843, "title": "New"}
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps([{"id": 843, "title": "New"}])
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(
+                app,
+                [
+                    "bulk-update",
+                    "--file",
+                    "edits.json",
+                    "--host",
+                    "192.168.1.100",
+                    "--port",
+                    "9999",
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_lexicon_class.assert_called_once_with(host="192.168.1.100", port=9999)
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_bulk_update_with_verbose_flag(self, mock_lexicon_class):
+        """Global --verbose should not break bulk-update."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.return_value = {"id": 843, "title": "New"}
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps([{"id": 843, "title": "New"}])
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(
+                app, ["--verbose", "bulk-update", "--file", "edits.json"]
+            )
+
+        assert result.exit_code == 0
+        assert mock_client.tracks.update.call_count == 1

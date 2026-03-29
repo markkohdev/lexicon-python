@@ -15,7 +15,39 @@ pip install lexicon-python
 The CLI is invoked via the `lexicon` command:
 
 ```bash
-lexicon [COMMAND] [OPTIONS]
+lexicon [OPTIONS] [COMMAND] [COMMAND_OPTIONS]
+```
+
+### Global options
+
+- `--verbose` / `-v` — Write **DEBUG** logs from the `lexicon` package to stderr. Useful when an API call fails in a confusing way: for example, `PATCH /track` responses that the client cannot parse are logged as raw JSON (truncated if very large). Example:
+
+```bash
+lexicon --verbose bulk-update --file edits.json
+```
+
+### Connecting to the Lexicon API
+
+Commands that talk to the running Lexicon app (`list-tracks`, `update-track`, `bulk-update`) use **localhost** and port **48624** by default. You rarely need to change this unless Lexicon runs elsewhere or uses a different port.
+
+- `--host TEXT` — Hostname or IP for the Lexicon API (default: `localhost`)
+- `--port INTEGER` — API port (default: `48624`)
+
+You can also set defaults with environment variables so you do not repeat flags on every command:
+
+- `LEXICON_HOST` — Default API host
+- `LEXICON_PORT` — Default API port
+
+```bash
+export LEXICON_HOST=192.168.1.100
+export LEXICON_PORT=48624
+lexicon list-tracks -f title -f artist
+```
+
+Remote server in one shot (same flags on any API command):
+
+```bash
+lexicon list-tracks --host 192.168.1.100 --port 48624 -f title -f artist
 ```
 
 ### Available Commands
@@ -23,6 +55,7 @@ lexicon [COMMAND] [OPTIONS]
 - `list-tracks` — List all tracks in the library with customizable output
 - `list-fields` — Display available fields for entities (tracks, playlists, tags)
 - `update-track` — Update a single track's fields by ID
+- `bulk-update` — Apply batch edits to multiple tracks from a JSON/JSONL file
 
 ---
 
@@ -37,11 +70,6 @@ lexicon list-tracks [OPTIONS]
 ```
 
 ### Options
-
-#### Connection Options
-
-- `--host TEXT` — Hostname or IP address for the Lexicon API (default: `localhost`)
-- `--port INTEGER` — API port number (default: `48624`)
 
 #### Field Selection
 
@@ -96,12 +124,6 @@ lexicon list-tracks --format "{title} - {artist} [{bpm} BPM]"
 
 ```bash
 lexicon list-tracks --json -f title -f artist -f album -f bpm -f key -f genre
-```
-
-#### Connect to a remote API server
-
-```bash
-lexicon list-tracks --host 192.168.1.100 --port 48624 -f title -f artist
 ```
 
 #### Use pairs format for detailed information
@@ -176,11 +198,6 @@ lexicon update-track --id TRACK_ID [--set FIELD=VALUE ...] [--edits JSON] [OPTIO
 
 ### Options
 
-#### Connection Options
-
-- `--host TEXT` — Hostname or IP address for the Lexicon API (default: `localhost`)
-- `--port INTEGER` — API port number (default: `48624`)
-
 #### Edit Input (one required, mutually exclusive)
 
 - `--set TEXT` — Field edits as `FIELD=VALUE` (can be used multiple times)
@@ -228,6 +245,98 @@ Summary: 1 track, 1 field change(s) (dry run — no changes applied)
 
 ```bash
 lexicon update-track --id 843 --set genre="Tech House" --output-format json
+```
+
+---
+
+## bulk-update
+
+Apply batch edits to multiple tracks from a JSON or JSONL file, with optional dry-run preview.
+
+### Syntax
+
+```bash
+lexicon bulk-update --file PATH [OPTIONS]
+```
+
+### Options
+
+#### Input
+
+- `--file PATH` — Path to a JSON array or JSONL edits file, or `-` for stdin (required)
+
+#### Behavior
+
+- `--dry-run` — Parse and validate the file, fetch current values, and display a before/after diff without applying any changes
+- `--continue-on-error` — If one update fails, log the error and continue to the next track (default: stop on first failure)
+- `--output-format [summary|json|table]` — Output format (default: `summary`)
+  - `summary` — Print success/failure counts only
+  - `json` — Full results as a JSON array of `{id, status, result_or_error}` objects
+  - `table` — Before/after diff view for each track
+
+### Edits File Format
+
+The edits file can be a JSON array or JSONL (one JSON object per line). Each entry must have an `id` (integer) and at least one field to edit:
+
+```json
+[
+  {"id": 843, "title": "Rinse & The Night", "genre": "Bass House"},
+  {"id": 844, "artist": "ZHU ft. 24kGoldn"},
+  {"id": 845, "genre": "Tech House", "remixer": ""}
+]
+```
+
+Or as JSONL:
+
+```
+{"id": 843, "title": "Rinse & The Night", "genre": "Bass House"}
+{"id": 844, "artist": "ZHU ft. 24kGoldn"}
+{"id": 845, "genre": "Tech House", "remixer": ""}
+```
+
+### Examples
+
+#### Preview changes without applying (dry run)
+
+```bash
+lexicon bulk-update --file edits.json --dry-run
+```
+
+Output:
+
+```
+Track 843:
+  title:  'Rinse & The Night [DanFX Mashup]'  →  'Rinse & The Night'
+  genre:  ''  →  'Bass House'
+
+Track 844:
+  artist: 'Zhu ft 24kgoldn'  →  'ZHU ft. 24kGoldn'
+
+Summary: 3 track(s), 4 field change(s) (dry run — no changes applied)
+```
+
+#### Apply changes
+
+```bash
+lexicon bulk-update --file edits.json
+```
+
+#### Continue past failures
+
+```bash
+lexicon bulk-update --file edits.json --continue-on-error
+```
+
+#### Pipe from stdin
+
+```bash
+cat edits.json | lexicon bulk-update --file -
+```
+
+#### Get detailed JSON output
+
+```bash
+lexicon bulk-update --file edits.json --output-format json
 ```
 
 ---
@@ -320,31 +429,12 @@ Use `lexicon list-fields track` to see the complete list of available fields.
 
 ---
 
-## Environment Variables
-
-You can set default connection settings via environment variables instead of command-line options:
-
-- `LEXICON_HOST` — Default API host
-- `LEXICON_PORT` — Default API port
-
-Example:
-
-```bash
-export LEXICON_HOST=192.168.1.100
-export LEXICON_PORT=48624
-
-# Now commands default to those settings
-lexicon list-tracks
-```
-
----
-
 ## Troubleshooting
 
 ### "Connection refused" error
 
 - Ensure Lexicon DJ is running with the Local API enabled
-- Verify the `--host` and `--port` match your Lexicon configuration
+- Verify host and port match your Lexicon configuration (see [Connecting to the Lexicon API](#connecting-to-the-lexicon-api))
 - Check your network connectivity if using a remote server
 
 ### "InquirerPy is required" warning

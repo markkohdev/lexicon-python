@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Optional, Sequence, Literal, Mapping, cast
 
 from .base import Resource
@@ -20,6 +21,36 @@ from .tracks_types import (
     _normalize_sorts,
 )
 from ._common_types import ValidationMode, _normalize_id_sequence
+
+
+def _json_id_matches(value: object, track_id: int) -> bool:
+    """True if ``value`` is a JSON-like id equal to ``track_id``."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value == track_id
+    if isinstance(value, float) and value == value:  # not NaN
+        try:
+            return int(value) == track_id
+        except (OverflowError, ValueError):
+            return False
+    if isinstance(value, str):
+        try:
+            return int(value, 10) == track_id
+        except ValueError:
+            return False
+    return False
+
+
+def _format_response_for_debug(response: dict) -> str:
+    try:
+        text = json.dumps(response, indent=2, default=str)
+    except (TypeError, ValueError):
+        text = repr(response)
+    max_len = 12_000
+    if len(text) > max_len:
+        return text[:max_len] + "\n... (truncated)"
+    return text
 
 
 class Tracks(Resource):
@@ -561,10 +592,47 @@ class Tracks(Resource):
             return None
 
         data = response.get("data") if isinstance(response, dict) else None
-        track = data.get("track") if isinstance(data, dict) else None
-        if isinstance(track, dict):
-            return cast(TrackResponse, track)
+        if isinstance(data, dict):
+            track = data.get("track")
+            if isinstance(track, dict):
+                return cast(TrackResponse, track)
+            # OpenAPI documents ``data.track``, but some Lexicon builds return the
+            # track dict directly in ``data`` (same mismatch as PATCH /tag; see
+            # ``docs/api-issues.md``).
+            data_id = data.get("id")
+            if _json_id_matches(data_id, track_id):
+                return cast(TrackResponse, data)
+            tracks_list = data.get("tracks")
+            if isinstance(tracks_list, list):
+                for item in tracks_list:
+                    if isinstance(item, dict) and _json_id_matches(
+                        item.get("id"), track_id
+                    ):
+                        return cast(TrackResponse, item)
+                if len(tracks_list) == 1 and isinstance(tracks_list[0], dict):
+                    return cast(TrackResponse, tracks_list[0])
 
+        # Top-level track object (no ``data`` wrapper).
+        top_id = response.get("id") if isinstance(response, dict) else None
+        if _json_id_matches(top_id, track_id):
+            return cast(TrackResponse, response)
+
+        # Some Lexicon builds return HTTP 200 with an empty JSON object on success.
+        if response == {}:
+            refetched = self.get(track_id, timeout=timeout)
+            if refetched is not None:
+                self._logger.debug(
+                    "PATCH /track returned empty object; using GET /track for id %s",
+                    track_id,
+                )
+                return cast(TrackResponse, refetched)
+
+        self._logger.debug(
+            "PATCH /track response could not be parsed as an updated track "
+            "(requested id=%s). Raw JSON:\n%s",
+            track_id,
+            _format_response_for_debug(response),
+        )
         self._logger.warning("Update track response missing expected track data.")
         return None
 
