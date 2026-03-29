@@ -10,6 +10,10 @@ from lexicon.cli.commands import (
     search_tracks,
     update_track,
     bulk_update,
+    list_tags,
+    create_tag,
+    update_tag,
+    delete_tag,
 )
 from lexicon.cli.logging_setup import configure_verbose_logging
 
@@ -41,6 +45,10 @@ app.command("search-tracks")(search_tracks)
 app.command("list-fields")(list_fields)
 app.command("update-track")(update_track)
 app.command("bulk-update")(bulk_update)
+app.command("list-tags")(list_tags)
+app.command("create-tag")(create_tag)
+app.command("update-tag")(update_tag)
+app.command("delete-tag")(delete_tag)
 
 
 def main() -> None:

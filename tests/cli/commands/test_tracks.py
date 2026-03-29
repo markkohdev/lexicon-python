@@ -1219,3 +1219,223 @@ class TestBulkUpdate(unittest.TestCase):
 
         assert result.exit_code == 0
         assert mock_client.tracks.update.call_count == 1
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_bulk_update_with_tag_labels_create_tags(self, mock_lexicon_class):
+        """bulk-update resolves Category:Label tag strings with --create-tags."""
+        mock_client = MagicMock()
+        mock_client.tags.list.return_value = [
+            {"id": 1, "label": "House", "categoryId": 10},
+        ]
+        mock_client.tags.categories.list.return_value = [
+            {"id": 10, "label": "Genre", "tags": [1]},
+        ]
+        mock_client.tags.add.return_value = {"id": 50, "label": "Chill", "categoryId": 10}
+        mock_client.tracks.update.return_value = {"id": 1, "tags": [1, 50]}
+        mock_lexicon_class.return_value = mock_client
+
+        edits = json.dumps([{"id": 1, "tags": ["Genre:House", "Genre:Chill"]}])
+
+        with self.runner.isolated_filesystem():
+            with open("edits.json", "w") as f:
+                f.write(edits)
+
+            result = self.runner.invoke(
+                app,
+                ["bulk-update", "--file", "edits.json", "--create-tags"],
+            )
+
+        assert result.exit_code == 0
+        call_args = mock_client.tracks.update.call_args
+        assert 1 in call_args[0][1]["tags"]
+        assert 50 in call_args[0][1]["tags"]
+
+
+# ---------------------------------------------------------------------------
+# Tag resolution in track listing output
+# ---------------------------------------------------------------------------
+
+SAMPLE_TAGS_FOR_TRACKS = [
+    {"id": 1, "label": "House", "categoryId": 10, "position": 0},
+    {"id": 2, "label": "Chill", "categoryId": 20, "position": 0},
+]
+
+SAMPLE_CATEGORIES_FOR_TRACKS = [
+    {"id": 10, "label": "Genre", "position": 0, "color": "#FF0000", "tags": [1]},
+    {"id": 20, "label": "Mood", "position": 1, "color": "#00FF00", "tags": [2]},
+]
+
+
+class TestTrackTagResolution(unittest.TestCase):
+    """Tests for automatic tag ID -> Category:Label resolution in track output."""
+
+    def setUp(self):
+        self.runner = CliRunner()
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_list_tracks_resolves_tags(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tracks.list.return_value = [
+            {"id": 100, "title": "Track A", "artist": "Artist A", "tags": [1, 2]},
+        ]
+        mock_client.tags.list.return_value = SAMPLE_TAGS_FOR_TRACKS
+        mock_client.tags.categories.list.return_value = SAMPLE_CATEGORIES_FOR_TRACKS
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app, ["list-tracks", "-f", "title", "-f", "tags"]
+        )
+        assert result.exit_code == 0
+        assert "Genre:House" in result.stdout
+        assert "Mood:Chill" in result.stdout
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_list_tracks_json_resolves_tags(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tracks.list.return_value = [
+            {"id": 100, "title": "Track A", "tags": [1]},
+        ]
+        mock_client.tags.list.return_value = SAMPLE_TAGS_FOR_TRACKS
+        mock_client.tags.categories.list.return_value = SAMPLE_CATEGORIES_FOR_TRACKS
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app, ["list-tracks", "-f", "title", "-f", "tags", "--json"]
+        )
+        assert result.exit_code == 0
+        parsed = json.loads(result.stdout.split("\n", 1)[1])
+        assert parsed[0]["tags"] == ["Genre:House"]
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_search_tracks_resolves_tags(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tracks.search.return_value = [
+            {"id": 200, "title": "Track B", "artist": "Artist B", "tags": [2]},
+        ]
+        mock_client.tags.list.return_value = SAMPLE_TAGS_FOR_TRACKS
+        mock_client.tags.categories.list.return_value = SAMPLE_CATEGORIES_FOR_TRACKS
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app,
+            [
+                "search-tracks",
+                "--filter",
+                "artist=Artist B",
+                "-f",
+                "title",
+                "-f",
+                "tags",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Mood:Chill" in result.stdout
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_no_resolution_without_tags_field(self, mock_lexicon_class):
+        """When -f tags is not requested, no tag resolution occurs."""
+        mock_client = MagicMock()
+        mock_client.tracks.list.return_value = [
+            {"id": 100, "title": "Track A", "artist": "Artist A"},
+        ]
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app, ["list-tracks", "-f", "title", "-f", "artist"]
+        )
+        assert result.exit_code == 0
+        mock_client.tags.list.assert_not_called()
+
+
+class TestUpdateTrackWithTags(unittest.TestCase):
+    """Tests for Category:Label tag strings in update-track."""
+
+    def setUp(self):
+        self.runner = CliRunner()
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_update_track_with_tag_labels_create_tags(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tags.list.return_value = SAMPLE_TAGS_FOR_TRACKS
+        mock_client.tags.categories.list.return_value = SAMPLE_CATEGORIES_FOR_TRACKS
+        mock_client.tracks.update.return_value = {"id": 100, "tags": [1, 2]}
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app,
+            [
+                "update-track",
+                "--id",
+                "100",
+                "--set",
+                'tags=Genre:House, Mood:Chill',
+                "--create-tags",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "updated successfully" in result.stdout
+        call_args = mock_client.tracks.update.call_args
+        assert set(call_args[0][1]["tags"]) == {1, 2}
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_update_track_tag_labels_via_edits_json(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tags.list.return_value = SAMPLE_TAGS_FOR_TRACKS
+        mock_client.tags.categories.list.return_value = SAMPLE_CATEGORIES_FOR_TRACKS
+        mock_client.tracks.update.return_value = {"id": 100, "tags": [1]}
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app,
+            [
+                "update-track",
+                "--id",
+                "100",
+                "--edits",
+                '{"tags": ["Genre:House"]}',
+                "--create-tags",
+            ],
+        )
+        assert result.exit_code == 0
+        call_args = mock_client.tracks.update.call_args
+        assert call_args[0][1]["tags"] == [1]
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_update_track_tag_labels_missing_no_create(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tags.list.return_value = SAMPLE_TAGS_FOR_TRACKS
+        mock_client.tags.categories.list.return_value = SAMPLE_CATEGORIES_FOR_TRACKS
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app,
+            [
+                "update-track",
+                "--id",
+                "100",
+                "--set",
+                'tags=NewCat:NewTag',
+            ],
+            input="n\n",
+        )
+        assert result.exit_code == 1
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_update_track_integer_tags_passthrough(self, mock_lexicon_class):
+        """Integer tag IDs via --edits should pass through without resolution."""
+        mock_client = MagicMock()
+        mock_client.tracks.update.return_value = {"id": 100, "tags": [1, 2]}
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app,
+            [
+                "update-track",
+                "--id",
+                "100",
+                "--edits",
+                '{"tags": [1, 2]}',
+            ],
+        )
+        assert result.exit_code == 0
+        mock_client.tags.list.assert_not_called()

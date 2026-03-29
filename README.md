@@ -93,6 +93,10 @@ API field names, and applying metadata updates without writing Python code.
 | `list-fields` | Show fields for `track`, `playlist`, or `tag` (optional `--sortable`). |
 | `update-track` | Patch one track by `--id` using `--set FIELD=VALUE` or `--edits` JSON. |
 | `bulk-update` | Apply batch edits from a JSON array or JSONL file (`--file`). |
+| `list-tags` | List all custom tags, grouped by category. |
+| `create-tag` | Create a custom tag (auto-creates category if needed). |
+| `update-tag` | Update a tag's label or move it to a different category. |
+| `delete-tag` | Delete a custom tag. |
 
 Globals: `-v` / `--verbose`, `--host`, `--port` (defaults: `localhost`, `48624`; also `LEXICON_HOST`, `LEXICON_PORT`).
 
@@ -121,6 +125,21 @@ lexicon update-track --id 123 --set title="New Title" --set genre="House"
 # Batch edits from a file; preview first
 lexicon bulk-update --file edits.json --dry-run
 lexicon bulk-update --file edits.json
+
+# List custom tags
+lexicon list-tags
+lexicon list-tags --output-format flat
+
+# Create / update / delete tags
+lexicon create-tag --tag "Genre:Ambient" --yes
+lexicon update-tag --tag "Genre:House" --label "Deep House"
+lexicon delete-tag --tag "Genre:Ambient" --yes
+
+# Tags in track listing (auto-resolved to Category:Label)
+lexicon list-tracks -f title -f artist -f tags --output-format table
+
+# Tags in track updates (Category:Label strings, auto-create missing)
+lexicon update-track --id 123 --set tags="Genre:House, Mood:Chill" --create-tags
 ```
 
 Custom line templates and other output modes:

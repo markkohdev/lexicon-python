@@ -16,6 +16,7 @@ from lexicon.cli.formatting import (
     render_tracks,
 )
 from lexicon.cli.prompts import prompt_for_fields
+from lexicon.cli.tag_utils import TagResolver, parse_tag_value
 
 
 def _prepare_track_output_fields(
@@ -78,6 +79,46 @@ def _parse_sort_specs(specs: list[str] | None) -> list[tuple[str, str]]:
     return result
 
 
+def _resolve_track_tags(client: Lexicon, tracks: list[dict]) -> None:
+    """Replace integer tag IDs with ``Category:Label`` strings in-place."""
+    resolver = TagResolver(client)
+    for track in tracks:
+        raw = track.get("tags")
+        if isinstance(raw, list) and raw:
+            track["tags"] = resolver.ids_to_labels(raw)
+
+
+def _resolve_tags_in_edits(
+    edits: dict[str, object],
+    client: Lexicon,
+    *,
+    create_tags: bool = False,
+) -> None:
+    """If *edits* contains a ``tags`` key with string labels, resolve to IDs in-place."""
+    if "tags" not in edits:
+        return
+    tag_val = parse_tag_value(edits["tags"])
+    if tag_val is None:
+        return
+    if isinstance(tag_val, list) and tag_val and isinstance(tag_val[0], int):
+        return
+    labels: list[str] = tag_val  # type: ignore[assignment]
+    resolver = TagResolver(client)
+
+    def _confirm(msg: str) -> bool:
+        return typer.confirm(msg)
+
+    try:
+        edits["tags"] = resolver.resolve_or_create(
+            labels,
+            auto_create=create_tags,
+            confirm_fn=None if create_tags else _confirm,
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1)
+
+
 def list_tracks(
     host: Annotated[
         str | None,
@@ -137,6 +178,9 @@ def list_tracks(
     if not tracks:
         typer.echo("No tracks found.")
         return
+
+    if "tags" in display_fields:
+        _resolve_track_tags(client, tracks)
 
     typer.echo(render_tracks(tracks, display_fields, output_format, format_string))
 
@@ -241,6 +285,9 @@ def search_tracks(
             err=True,
         )
 
+    if "tags" in display_fields:
+        _resolve_track_tags(client, tracks)
+
     typer.echo(render_tracks(tracks, display_fields, eff_output_format, format_string))
 
 
@@ -294,6 +341,13 @@ def update_track(
             help="Output format for the updated track: pairs (default), json, or compact",
         ),
     ] = "pairs",
+    create_tags: Annotated[
+        bool,
+        typer.Option(
+            "--create-tags",
+            help="Auto-create missing tags/categories without prompting (for automation)",
+        ),
+    ] = False,
 ) -> None:
     """Update a single track's fields."""
     has_set = set_fields is not None and len(set_fields) > 0
@@ -337,6 +391,8 @@ def update_track(
         raise typer.Exit(1)
 
     client = Lexicon(host=host, port=port)
+
+    _resolve_tags_in_edits(edits, client, create_tags=create_tags)
 
     if dry_run:
         current_track = client.tracks.get(track_id)
@@ -493,11 +549,24 @@ def bulk_update(
             help="API port number",
         ),
     ] = None,
+    create_tags: Annotated[
+        bool,
+        typer.Option(
+            "--create-tags",
+            help="Auto-create missing tags/categories without prompting (for automation)",
+        ),
+    ] = False,
 ) -> None:
     """Apply batch edits to multiple tracks from a JSON/JSONL file."""
     entries = _parse_edits_file(file)
 
     client = Lexicon(host=host, port=port)
+
+    # Resolve Category:Label tag strings to IDs across all entries
+    has_tag_edits = any("tags" in entry for entry in entries)
+    if has_tag_edits:
+        for entry in entries:
+            _resolve_tags_in_edits(entry, client, create_tags=create_tags)
 
     # Collect all unique edit field names (excluding id) for fetching
     all_edit_fields: set[str] = set()

@@ -18,7 +18,7 @@ lexicon [OPTIONS] [COMMAND] [COMMAND_OPTIONS]
 | `--host TEXT` | API host (default `localhost`; override with `LEXICON_HOST`). |
 | `--port INTEGER` | API port (default `48624`; override with `LEXICON_PORT`). |
 
-API commands (`list-tracks`, `search-tracks`, `update-track`, `bulk-update`) target localhost:48624 unless you set flags or env vars.
+API commands (`list-tracks`, `search-tracks`, `update-track`, `bulk-update`, `list-tags`, `create-tag`, `update-tag`, `delete-tag`) target localhost:48624 unless you set flags or env vars.
 
 ```bash
 lexicon list-tracks --host 192.168.1.100 --port 48624 -f title -f artist
@@ -33,6 +33,10 @@ lexicon list-tracks --host 192.168.1.100 --port 48624 -f title -f artist
 | `list-fields` | Show fields for `track` / `playlist` / `tag`. |
 | `update-track` | Patch one track by id (`--set` or `--edits`). |
 | `bulk-update` | Batch edits from JSON or JSONL. |
+| `list-tags` | List all custom tags, grouped by category. |
+| `create-tag` | Create a custom tag (auto-creates category if needed). |
+| `update-tag` | Update a tag's label or move it to a different category. |
+| `delete-tag` | Delete a custom tag. |
 
 ---
 
@@ -49,6 +53,8 @@ Used by **`list-tracks`** and **`search-tracks`** (unless noted).
 
 `compact`: `[id] …fields…`. `table`: ASCII columns. `pairs`: one block per track. `json`: array of objects.
 
+**Tag resolution:** When `-f tags` is included, the CLI automatically resolves numeric tag IDs to human-readable `Category:Label` strings (e.g. `Genre:House, Mood:Chill`). This applies to all output formats including JSON.
+
 ---
 
 ## list-tracks
@@ -64,6 +70,7 @@ lexicon list-tracks
 lexicon list-tracks -f title -f artist -f bpm --output-format table
 lexicon list-tracks --format "{title} - {artist} [{bpm} BPM]"
 lexicon list-tracks --json -f title -f artist -f album -f bpm -f key -f genre
+lexicon list-tracks -f title -f artist -f tags --output-format table
 ```
 
 ---
@@ -131,14 +138,26 @@ Provide **either** `--set` (repeat) **or** `--edits` (JSON string), not both.
 |--------|-------------|
 | `--dry-run` | Show diff vs current track; no write. |
 | `--output-format` | `pairs` (default), `json`, or `compact`. |
+| `--create-tags` | Auto-create missing tags/categories without prompting (useful for automation/agents). |
 
 **Editable fields:** `title`, `artist`, `albumTitle`, `label`, `remixer`, `mix`, `composer`, `producer`, `grouping`, `lyricist`, `comment`, `key`, `genre`, `rating`, `color`, `year`, `playCount`, `trackNumber`, `energy`, `danceability`, `popularity`, `happiness`, `extra1`, `extra2`, `tags`, `tempomarkers`, `cuepoints`, `incoming`, `archived`
+
+### Tags in updates
+
+The `tags` field accepts `Category:Label` strings instead of numeric IDs:
+
+- **`--set`:** `--set tags="Genre:House, Mood:Chill"` (comma-separated)
+- **`--edits`:** `--edits '{"tags": ["Genre:House", "Mood:Chill"]}'` (JSON array of strings)
+
+If a tag or category doesn't exist yet, the CLI will prompt for confirmation. Pass `--create-tags` to skip prompts and auto-create.
 
 ```bash
 lexicon update-track --id 843 --set title="Rinse & The Night" --set genre="Bass House"
 lexicon update-track --id 843 --edits '{"title": "Rinse & The Night", "genre": "Bass House"}'
 lexicon update-track --id 843 --set title="Rinse & The Night" --dry-run
 lexicon update-track --id 843 --set genre="Tech House" --output-format json
+lexicon update-track --id 843 --set tags="Genre:House, Mood:Chill"
+lexicon update-track --id 843 --set tags="Genre:House, Vibe:Dark" --create-tags
 ```
 
 ---
@@ -156,8 +175,9 @@ lexicon bulk-update --file PATH [OPTIONS]
 | `--dry-run` | Validate, fetch currents, print diffs; no writes. |
 | `--continue-on-error` | Keep going after a failed row (default: stop on first error). |
 | `--output-format` | `summary` (default), `json` (per-id status objects), or `table` (per-track diffs). |
+| `--create-tags` | Auto-create missing tags/categories without prompting. |
 
-**File:** JSON array or JSONL. Each object needs `id` (int) and at least one field to change:
+**File:** JSON array or JSONL. Each object needs `id` (int) and at least one field to change. Tag values can use `Category:Label` strings:
 
 ```json
 [
@@ -172,6 +192,116 @@ lexicon bulk-update --file edits.json
 lexicon bulk-update --file edits.json --continue-on-error
 cat edits.json | lexicon bulk-update --file -
 lexicon bulk-update --file edits.json --output-format json
+```
+
+---
+
+## list-tags
+
+```bash
+lexicon list-tags [OPTIONS]
+```
+
+Lists all custom tags in the library, grouped by category.
+
+| Option | Description |
+|--------|-------------|
+| `--output-format` | `grouped` (default), `flat` (`Category:Label` per line), or `json`. |
+| `--host`, `--port` | Connection options. |
+
+```bash
+lexicon list-tags
+lexicon list-tags --output-format flat
+lexicon list-tags --output-format json
+```
+
+Example output (grouped):
+
+```
+Genre (3 tags):
+  House
+  Techno
+  Ambient
+
+Mood (2 tags):
+  Chill
+  Energy
+```
+
+Example output (flat):
+
+```
+Genre:House
+Genre:Techno
+Mood:Chill
+```
+
+---
+
+## create-tag
+
+```bash
+lexicon create-tag --tag "Category:Label" [OPTIONS]
+```
+
+Creates a new custom tag. If the category doesn't exist, it is created automatically (with confirmation, or `--yes` to skip).
+
+| Option | Description |
+|--------|-------------|
+| `--tag TEXT` | Tag in `Category:Label` format (required). |
+| `--color TEXT` | Hex color for a new category (e.g. `#FF0000`). |
+| `--yes`, `-y` | Skip confirmation prompts. |
+| `--host`, `--port` | Connection options. |
+
+```bash
+lexicon create-tag --tag "Genre:Ambient"
+lexicon create-tag --tag "Vibe:Dark" --yes
+lexicon create-tag --tag "Vibe:Dark" --color "#8B00FF" --yes
+```
+
+---
+
+## update-tag
+
+```bash
+lexicon update-tag --tag "Category:Label" (--label TEXT | --category TEXT) [OPTIONS]
+```
+
+Updates an existing tag's label or moves it to a different category.
+
+| Option | Description |
+|--------|-------------|
+| `--tag TEXT` | Existing tag as `Category:Label` (required). |
+| `--label TEXT` | New label for the tag. |
+| `--category TEXT` | Move to this category (created if missing with `--yes`). |
+| `--yes`, `-y` | Skip confirmation prompts. |
+| `--host`, `--port` | Connection options. |
+
+```bash
+lexicon update-tag --tag "Genre:House" --label "Deep House"
+lexicon update-tag --tag "Genre:Chill" --category "Mood"
+lexicon update-tag --tag "Genre:Chill" --category "NewCategory" --yes
+```
+
+---
+
+## delete-tag
+
+```bash
+lexicon delete-tag --tag "Category:Label" [OPTIONS]
+```
+
+Deletes a custom tag.
+
+| Option | Description |
+|--------|-------------|
+| `--tag TEXT` | Tag to delete as `Category:Label` (required). |
+| `--yes`, `-y` | Skip confirmation prompt. |
+| `--host`, `--port` | Connection options. |
+
+```bash
+lexicon delete-tag --tag "Genre:Ambient" --yes
+lexicon delete-tag --tag "Mood:Chill"
 ```
 
 ---
