@@ -81,20 +81,55 @@ export LEXICON_PORT=48624
 
 ## CLI
 
-A command-line interface is included for quick access to library queries without writing Python code.
+A command-line interface is included for listing and searching tracks, inspecting
+API field names, and applying metadata updates without writing Python code.
+
+### Commands
+
+| Command | What it does |
+|---------|----------------|
+| `list-tracks` | List tracks in the library (optional interactive field picker). |
+| `search-tracks` | Search with `--filter` / `--sort` / `--source`; same output options as `list-tracks`. |
+| `list-fields` | Show fields for `track`, `playlist`, or `tag` (optional `--sortable`). |
+| `update-track` | Patch one track by `--id` using `--set FIELD=VALUE` or `--edits` JSON. |
+| `bulk-update` | Apply batch edits from a JSON array or JSONL file (`--file`). |
+
+Globals: `-v` / `--verbose`, `--host`, `--port` (defaults: `localhost`, `48624`; also `LEXICON_HOST`, `LEXICON_PORT`).
+
+### Examples
 
 ```bash
-# List all tracks
-lexicon list-tracks -f title -f artist -f bpm
+# List tracks (table); explicit fields skip the interactive picker
+lexicon list-tracks -f title -f artist -f bpm --output-format table
 
-# List available fields
+# Discover field names for scripts
 lexicon list-fields track
+lexicon list-fields track --sortable
 
-# Custom formatting and output formats
+# Search: filters are FIELD=VALUE (repeatable); sort is FIELD:dir
+lexicon search-tracks --filter artist="Daft Punk" --sort title:asc \
+  -f title -f artist -f bpm --output-format table
+lexicon search-tracks --filter bpm="120-128" -f title -f artist -f bpm
+
+# Export matches as JSON (pass -f so --json does not open the field picker)
+lexicon search-tracks --filter genre="House" --json -f title -f artist -f genre
+
+# Update one track; --dry-run shows a diff without writing
+lexicon update-track --id 123 --set genre="Tech House" --dry-run
+lexicon update-track --id 123 --set title="New Title" --set genre="House"
+
+# Batch edits from a file; preview first
+lexicon bulk-update --file edits.json --dry-run
+lexicon bulk-update --file edits.json
+```
+
+Custom line templates and other output modes:
+
+```bash
 lexicon list-tracks --format "{title} - {artist} [{bpm} BPM]" --output-format table
 ```
 
-See [CLI Documentation](docs/CLI.md) for full command reference and examples.
+See [CLI Documentation](docs/CLI.md) for the full reference (file format for `bulk-update`, filter semantics, editable fields, and troubleshooting).
 
 ## Validation Modes
 
