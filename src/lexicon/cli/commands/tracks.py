@@ -8,14 +8,74 @@ from typing import Annotated, Literal
 import typer
 
 from lexicon.client import Lexicon
-from lexicon.resources.tracks_types import TrackField
+from lexicon.resources.tracks_types import TrackField, TrackSource
 from lexicon.cli.formatting import (
     format_value,
-    format_table,
     format_pairs,
     display_diff,
+    render_tracks,
 )
 from lexicon.cli.prompts import prompt_for_fields
+
+
+def _prepare_track_output_fields(
+    fields: list[str] | None,
+    format_string: str | None,
+    json_output: bool,
+    output_format: Literal["compact", "table", "pairs", "json"],
+) -> tuple[list[str], list[TrackField], Literal["compact", "table", "pairs", "json"]]:
+    """Resolve display/fetch fields and effective output format (shared list/search)."""
+    default_fields = ["title", "artist", "albumTitle"]
+    suggested_fields = ["bpm", "key", "genre", "year"]
+
+    if json_output:
+        output_format = "json"
+
+    if output_format == "json" or not format_string:
+        if fields:
+            display_fields = fields
+        else:
+            display_fields = prompt_for_fields(default_fields, suggested_fields)
+            if display_fields is None:
+                typer.echo("Field selection cancelled.")
+                raise typer.Exit(1)
+    else:
+        field_pattern = re.compile(r"\{(\w+)\}")
+        format_fields = field_pattern.findall(format_string)
+        display_fields = format_fields if format_fields else default_fields
+
+    if "id" not in display_fields:
+        display_fields.insert(0, "id")  # type: ignore
+    fetch_fields: list[TrackField] = display_fields.copy()  # type: ignore
+    return display_fields, fetch_fields, output_format
+
+
+def _parse_filter_pairs(pairs: list[str]) -> dict[str, str]:
+    """Parse ``--filter key=value`` into a filter dict (first ``=`` splits key/value)."""
+    out: dict[str, str] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            typer.echo(f"Error: invalid --filter (missing '='): {pair}", err=True)
+            raise typer.Exit(1)
+        key, value = pair.split("=", 1)
+        out[key.strip()] = value.strip()
+    return out
+
+
+def _parse_sort_specs(specs: list[str] | None) -> list[tuple[str, str]]:
+    """Parse ``--sort field:dir``; default sort is ``title:asc`` when none given."""
+    if not specs:
+        return [("title", "asc")]
+    result: list[tuple[str, str]] = []
+    for spec in specs:
+        spec = spec.strip()
+        if ":" not in spec:
+            result.append((spec, "asc"))
+        else:
+            field, _, direction = spec.partition(":")
+            direction = direction.strip() or "asc"
+            result.append((field.strip(), direction))
+    return result
 
 
 def list_tracks(
@@ -68,94 +128,120 @@ def list_tracks(
 
     client = Lexicon(host=host, port=port)
 
-    # Determine which fields to fetch
-    default_fields = ["title", "artist", "albumTitle"]
-    suggested_fields = ["bpm", "key", "genre", "year"]
+    display_fields, fetch_fields, output_format = _prepare_track_output_fields(
+        fields, format_string, json_output, output_format
+    )
 
-    # Override output format if --json is used
-    if json_output:
-        output_format = "json"
-
-    if output_format == "json" or not format_string:
-        # For JSON output or when no format string, use --field options or defaults
-        if fields:
-            display_fields = fields
-        else:
-            # Prompt user interactively for fields
-            display_fields = prompt_for_fields(default_fields, suggested_fields)
-            if display_fields is None:
-                typer.echo("Field selection cancelled.")
-                raise typer.Exit(1)
-    else:
-        # Extract field names from format string
-        field_pattern = re.compile(r"\{(\w+)\}")
-        format_fields = field_pattern.findall(format_string)
-        display_fields = format_fields if format_fields else default_fields
-
-    # Always ensure id is included for fetching and display
-    if "id" not in display_fields:
-        display_fields.insert(0, "id")  # type: ignore
-    fetch_fields: list[TrackField] = display_fields.copy()  # type: ignore
-
-    # Fetch tracks with the fields to display
     tracks = client.tracks.list(fields=fetch_fields)
 
     if not tracks:
         typer.echo("No tracks found.")
         return
 
-    # Display tracks based on output format
-    if output_format == "json":
-        # Create a list with only the requested fields
-        output_tracks = []
-        for track in tracks:
-            filtered_track = {field: track.get(field) for field in display_fields}
-            output_tracks.append(filtered_track)
-        typer.echo(json.dumps(output_tracks, indent=2))
-    elif output_format == "table":
-        typer.echo(f"\nFound {len(tracks)} track(s):\n")
-        table_output = format_table(tracks, display_fields)
-        typer.echo(table_output)
-    elif output_format == "pairs":
-        typer.echo(f"\nFound {len(tracks)} track(s):\n")
-        pairs_output = format_pairs(tracks, display_fields)
-        typer.echo(pairs_output)
-    else:  # compact
-        if format_string:
-            typer.echo(f"\nFound {len(tracks)} track(s):\n")
-            for track in tracks:
-                # Prepare values for formatting
-                format_values = {}
-                for field in display_fields:
-                    value = track.get(field, "N/A")
-                    if isinstance(value, list):
-                        value = ", ".join(str(v) for v in value) if value else "N/A"
-                    format_values[field] = value
+    typer.echo(render_tracks(tracks, display_fields, output_format, format_string))
 
-                # Format and display
-                try:
-                    output = format_string.format(**format_values)
-                    typer.echo(f"  {output}")
-                except KeyError as e:
-                    typer.echo(
-                        f"  Error formatting track {track.get('id')}: Missing field {e}"
-                    )
-        else:
-            typer.echo(f"\nFound {len(tracks)} track(s):\n")
-            # Always include ID first
-            for track in tracks:
-                track_id = track.get("id", "N/A")
-                prefix = f"[{track_id}] "
-                parts = []
 
-                # Add requested fields
-                for field in display_fields:
-                    if field == "id":
-                        continue
-                    value = format_value(track.get(field, ""))
-                    parts.append(value)
+def search_tracks(
+    filter_pairs: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--filter",
+            help='Search filter as FIELD=VALUE (repeatable), e.g. --filter artist="Daft Punk"',
+        ),
+    ] = None,
+    sort_specs: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--sort",
+            help="Sort as FIELD:dir (repeatable; dir defaults to asc). Default: title:asc",
+        ),
+    ] = None,
+    host: Annotated[
+        str | None,
+        typer.Option(
+            "--host",
+            help="Hostname or IP for the Lexicon API",
+        ),
+    ] = None,
+    port: Annotated[
+        int | None,
+        typer.Option(
+            "--port",
+            help="API port number",
+        ),
+    ] = None,
+    source: Annotated[
+        TrackSource,
+        typer.Option(
+            "--source",
+            help="Track source: non-archived (default), all, archived, incoming",
+        ),
+    ] = "non-archived",
+    fields: Annotated[
+        list[str] | None,
+        typer.Option(
+            "-f",
+            "--field",
+            help="Field(s) to display (can be used multiple times, defaults to: title, artist, albumTitle)",
+        ),
+    ] = None,
+    format_string: Annotated[
+        str | None,
+        typer.Option(
+            "--format",
+            help='Format string for output (e.g., "{title} - {artist} [{bpm} BPM]"). Overrides --field option.',
+        ),
+    ] = None,
+    output_format: Annotated[
+        Literal["compact", "table", "pairs", "json"],
+        typer.Option(
+            "--output-format",
+            help="Output format: compact (default), table, pairs (key-value), or json",
+        ),
+    ] = "compact",
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Output tracks as JSON objects. Overrides --output-format. Ignores --format option.",
+        ),
+    ] = False,
+) -> None:
+    """Search tracks by field filters (same output options as list-tracks)."""
+    filters = _parse_filter_pairs(filter_pairs or [])
+    sort_tuples = _parse_sort_specs(sort_specs)
 
-                typer.echo(f"  {prefix}{' - '.join(parts)}")
+    typer.echo("Searching tracks...")
+
+    client = Lexicon(host=host, port=port)
+
+    display_fields, fetch_fields, eff_output_format = _prepare_track_output_fields(
+        fields, format_string, json_output, output_format
+    )
+
+    tracks = client.tracks.search(
+        filter=filters,
+        sort=sort_tuples,
+        fields=fetch_fields,
+        source=source,
+    )
+
+    if tracks is None:
+        typer.echo("Error: search failed.", err=True)
+        raise typer.Exit(1)
+
+    if not tracks:
+        typer.echo("No tracks found.")
+        return
+
+    if len(tracks) == 1000:
+        typer.echo(
+            "Warning: Result count is at the API limit (1000 tracks); "
+            "there may be more matches. Refine your filters.",
+            err=True,
+        )
+
+    typer.echo(render_tracks(tracks, display_fields, eff_output_format, format_string))
 
 
 def update_track(

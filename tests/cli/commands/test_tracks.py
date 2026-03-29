@@ -252,6 +252,155 @@ class TestListTracks(unittest.TestCase):
         assert output[0]["title"] == "Test Track"
 
 
+class TestSearchTracks(unittest.TestCase):
+    """Tests for the search-tracks CLI command."""
+
+    def setUp(self):
+        self.runner = CliRunner()
+        self.sample_tracks = SAMPLE_TRACKS
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_search_filter_and_default_sort(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tracks.search.return_value = self.sample_tracks
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app,
+            [
+                "search-tracks",
+                "--filter",
+                "artist=Test Artist",
+                "-f",
+                "title",
+                "-f",
+                "artist",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Searching tracks..." in result.stdout
+        assert "[1] Test Track - Test Artist" in result.stdout
+        call_kw = mock_client.tracks.search.call_args.kwargs
+        assert call_kw["filter"] == {"artist": "Test Artist"}
+        assert call_kw["sort"] == [("title", "asc")]
+        assert call_kw["source"] == "non-archived"
+        assert "id" in call_kw["fields"]
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_search_sort_parsing(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tracks.search.return_value = self.sample_tracks
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app,
+            [
+                "search-tracks",
+                "--filter",
+                "bpm=128",
+                "--sort",
+                "title:desc",
+                "--sort",
+                "artist",
+                "-f",
+                "title",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert mock_client.tracks.search.call_args.kwargs["sort"] == [
+            ("title", "desc"),
+            ("artist", "asc"),
+        ]
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_search_source_option(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tracks.search.return_value = []
+        mock_lexicon_class.return_value = mock_client
+
+        self.runner.invoke(
+            app,
+            ["search-tracks", "--source", "archived", "-f", "title"],
+        )
+
+        assert mock_client.tracks.search.call_args.kwargs["source"] == "archived"
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_search_table_and_pairs_json_output(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tracks.search.return_value = self.sample_tracks
+        mock_lexicon_class.return_value = mock_client
+
+        r_table = self.runner.invoke(
+            app,
+            ["search-tracks", "-f", "title", "-f", "bpm", "--output-format", "table"],
+        )
+        assert r_table.exit_code == 0
+        assert "-+-" in r_table.stdout
+
+        r_pairs = self.runner.invoke(
+            app,
+            ["search-tracks", "-f", "title", "--output-format", "pairs"],
+        )
+        assert r_pairs.exit_code == 0
+        assert "Track 1" in r_pairs.stdout
+
+        r_json = self.runner.invoke(
+            app, ["search-tracks", "-f", "title", "-f", "artist", "--json"]
+        )
+        assert r_json.exit_code == 0
+        lines = r_json.stdout.split("\n")
+        json_str = "\n".join(lines[1:])
+        data = json.loads(json_str)
+        assert len(data) == 2
+        assert data[0]["title"] == "Test Track"
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_search_empty_results(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tracks.search.return_value = []
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(app, ["search-tracks", "-f", "title"])
+        assert result.exit_code == 0
+        assert "No tracks found." in result.stdout
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_search_none_returns_error(self, mock_lexicon_class):
+        mock_client = MagicMock()
+        mock_client.tracks.search.return_value = None
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(app, ["search-tracks", "-f", "title"])
+        assert result.exit_code == 1
+        assert "Error: search failed." in result.stderr
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_search_1000_results_warning(self, mock_lexicon_class):
+        many = [{"id": i, "title": f"T{i}", "artist": "A"} for i in range(1000)]
+        mock_client = MagicMock()
+        mock_client.tracks.search.return_value = many
+        mock_lexicon_class.return_value = mock_client
+
+        result = self.runner.invoke(
+            app, ["search-tracks", "-f", "title", "-f", "artist"]
+        )
+        assert result.exit_code == 0
+        assert "1000" in result.stderr
+        assert "limit" in result.stderr.lower()
+
+    @patch("lexicon.cli.commands.tracks.Lexicon")
+    def test_search_invalid_filter_missing_equals(self, mock_lexicon_class):
+        result = self.runner.invoke(
+            app, ["search-tracks", "--filter", "notakeyvalue", "-f", "title"]
+        )
+        assert result.exit_code == 1
+        assert "missing '='" in result.stderr
+        mock_lexicon_class.assert_not_called()
+
+
 class TestUpdateTrack(unittest.TestCase):
     """Tests for the update-track CLI command."""
 

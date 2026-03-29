@@ -1,6 +1,9 @@
 """Output formatting utilities for CLI commands."""
 
-from typing import Any, Mapping
+import json
+from typing import Any, Literal, Mapping
+
+OutputFormat = Literal["compact", "table", "pairs", "json"]
 
 
 def format_value(value: Any) -> str:
@@ -115,6 +118,54 @@ def format_pairs(
                 lines.append(f"  {field:20} {value}")
 
     return "\n".join(lines)
+
+
+def render_tracks(
+    tracks: list[dict],
+    display_fields: list[str],
+    output_format: OutputFormat,
+    format_string: str | None,
+) -> str:
+    """Format a list of track dicts for CLI output (list-tracks / search-tracks)."""
+    if output_format == "json":
+        output_tracks = [
+            {field: track.get(field) for field in display_fields} for track in tracks
+        ]
+        return json.dumps(output_tracks, indent=2)
+    if output_format == "table":
+        table_output = format_table(tracks, display_fields)
+        return f"\nFound {len(tracks)} track(s):\n{table_output}"
+    if output_format == "pairs":
+        pairs_output = format_pairs(tracks, display_fields)
+        return f"\nFound {len(tracks)} track(s):\n{pairs_output}"
+    # compact
+    lines: list[str] = [f"\nFound {len(tracks)} track(s):\n"]
+    if format_string:
+        for track in tracks:
+            format_values: dict[str, Any] = {}
+            for field in display_fields:
+                value = track.get(field, "N/A")
+                if isinstance(value, list):
+                    value = ", ".join(str(v) for v in value) if value else "N/A"
+                format_values[field] = value
+            try:
+                output = format_string.format(**format_values)
+                lines.append(f"  {output}\n")
+            except KeyError as e:
+                lines.append(
+                    f"  Error formatting track {track.get('id')}: Missing field {e}\n"
+                )
+    else:
+        for track in tracks:
+            track_id = track.get("id", "N/A")
+            prefix = f"[{track_id}] "
+            parts = []
+            for field in display_fields:
+                if field == "id":
+                    continue
+                parts.append(format_value(track.get(field, "")))
+            lines.append(f"  {prefix}{' - '.join(parts)}\n")
+    return "".join(lines)
 
 
 def display_diff(

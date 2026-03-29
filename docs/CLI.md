@@ -28,7 +28,7 @@ lexicon --verbose bulk-update --file edits.json
 
 ### Connecting to the Lexicon API
 
-Commands that talk to the running Lexicon app (`list-tracks`, `update-track`, `bulk-update`) use **localhost** and port **48624** by default. You rarely need to change this unless Lexicon runs elsewhere or uses a different port.
+Commands that talk to the running Lexicon app (`list-tracks`, `search-tracks`, `update-track`, `bulk-update`) use **localhost** and port **48624** by default. You rarely need to change this unless Lexicon runs elsewhere or uses a different port.
 
 - `--host TEXT` — Hostname or IP for the Lexicon API (default: `localhost`)
 - `--port INTEGER` — API port (default: `48624`)
@@ -53,6 +53,7 @@ lexicon list-tracks --host 192.168.1.100 --port 48624 -f title -f artist
 ### Available Commands
 
 - `list-tracks` — List all tracks in the library with customizable output
+- `search-tracks` — Search tracks by field filters (same output options as list-tracks)
 - `list-fields` — Display available fields for entities (tracks, playlists, tags)
 - `update-track` — Update a single track's fields by ID
 - `bulk-update` — Apply batch edits to multiple tracks from a JSON/JSONL file
@@ -131,6 +132,71 @@ lexicon list-tracks --json -f title -f artist -f album -f bpm -f key -f genre
 ```bash
 lexicon list-tracks -f title -f artist -f album -f bpm -f key --output-format pairs
 ```
+
+---
+
+## search-tracks
+
+Search tracks using the Lexicon search API. Filters and sort are passed to `tracks.search()`; field display and output formats match `list-tracks`.
+
+### Syntax
+
+```bash
+lexicon search-tracks [OPTIONS]
+```
+
+### Options
+
+#### Search
+
+- `--filter TEXT` — Filter as `FIELD=VALUE` (repeatable). Only the first `=` splits key and value, so values may contain `=`.
+  - Examples: `--filter artist="Daft Punk"`, `--filter bpm=120`, `--filter bpm="120-128"`, `--filter bpm=">=120"`, `--filter dateAdded="2024-01-01"`, `--filter tags="Rock, Chill"` or `--filter tags="~Rock, !Chill"`
+- `--sort TEXT` — Sort as `FIELD:dir` (repeatable). Direction defaults to `asc` if omitted (e.g. `--sort title` is `title:asc`). Default when no `--sort` is given: `title:asc`.
+- `--source [non-archived|all|archived|incoming]` — Which tracks to include (default: `non-archived`).
+
+#### Connection
+
+Same as other API commands: `--host`, `--port`.
+
+#### Field selection and output
+
+Same as `list-tracks`:
+
+- `-f, --field TEXT` — Fields to show (repeatable); default fields apply when omitted and you are prompted interactively (unless using `--format` or `--json`).
+- `--format TEXT` — Format string with `{fieldName}` placeholders (overrides `--field`).
+- `--output-format [compact|table|pairs|json]` — Output style (default: `compact`).
+- `--json` — JSON output (overrides `--output-format`).
+
+### Examples
+
+#### Search by artist and show a table
+
+```bash
+lexicon search-tracks --filter artist="Daft Punk" \
+  --sort title:asc \
+  -f title -f artist -f bpm \
+  --output-format table
+```
+
+#### BPM range, compact output
+
+```bash
+lexicon search-tracks --filter bpm="120-128" -f title -f artist -f bpm
+```
+
+#### JSON export of matches
+
+```bash
+lexicon search-tracks --filter genre="House" --json -f title -f artist -f genre
+```
+
+#### Include archived tracks
+
+```bash
+lexicon search-tracks --source archived --filter title="Acid" -f title -f artist
+```
+
+If the API returns 1,000 tracks, the CLI prints a warning that results may be capped; refine filters to narrow the set.
 
 ---
 

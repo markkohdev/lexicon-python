@@ -4,7 +4,13 @@ from typing import Annotated
 
 import typer
 
-from lexicon.cli.commands import list_tracks, list_fields, update_track, bulk_update
+from lexicon.cli.commands import (
+    list_tracks,
+    list_fields,
+    search_tracks,
+    update_track,
+    bulk_update,
+)
 from lexicon.cli.logging_setup import configure_verbose_logging
 
 
@@ -31,6 +37,7 @@ def _main_options(
 
 # Register commands
 app.command("list-tracks")(list_tracks)
+app.command("search-tracks")(search_tracks)
 app.command("list-fields")(list_fields)
 app.command("update-track")(update_track)
 app.command("bulk-update")(bulk_update)
