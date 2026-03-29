@@ -19,8 +19,18 @@ class TestListFieldsCommand(unittest.TestCase):
     def test_list_fields_track_default(self, mock_track_fields):
         """Test list-fields with default track entity."""
         mock_track_fields = (
-            "id", "type", "title", "artist", "albumTitle", "label",
-            "remixer", "mix", "composer", "producer", "bpm", "duration"
+            "id",
+            "type",
+            "title",
+            "artist",
+            "albumTitle",
+            "label",
+            "remixer",
+            "mix",
+            "composer",
+            "producer",
+            "bpm",
+            "duration",
         )
         with patch("lexicon.cli.commands.fields.TRACK_FIELDS", mock_track_fields):
             result = self.runner.invoke(app, ["list-fields"])
@@ -71,7 +81,9 @@ class TestListFieldsCommand(unittest.TestCase):
         result = self.runner.invoke(app, ["list-fields", "playlist", "--sortable"])
 
         assert result.exit_code == 0
-        assert "Playlists do not currently support sorting via the API." in result.output
+        assert (
+            "Playlists do not currently support sorting via the API." in result.output
+        )
 
     def test_list_fields_tag(self):
         """Test list-fields with tag entity."""
@@ -108,7 +120,7 @@ class TestListFieldsCommand(unittest.TestCase):
     def test_list_fields_invalid_entity_variations(self):
         """Test list-fields with various invalid entity types."""
         invalid_entities = ["album", "artist", "cue", "song"]
-        
+
         for entity in invalid_entities:
             result = self.runner.invoke(app, ["list-fields", entity])
             assert result.exit_code == 1
@@ -117,9 +129,7 @@ class TestListFieldsCommand(unittest.TestCase):
     @patch("lexicon.cli.commands.fields.SORT_FIELDS")
     def test_list_fields_sortable_count_correct(self, mock_sort_fields):
         """Test that sortable field count matches the number of sortable fields."""
-        mock_sort_fields = (
-            "id", "type", "title", "artist", "albumTitle", "label"
-        )
+        mock_sort_fields = ("id", "type", "title", "artist", "albumTitle", "label")
         with patch("lexicon.cli.commands.fields.SORT_FIELDS", mock_sort_fields):
             result = self.runner.invoke(app, ["list-fields", "track", "--sortable"])
 

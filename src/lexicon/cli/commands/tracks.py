@@ -59,17 +59,17 @@ def list_tracks(
 ) -> None:
     """List all tracks in the library."""
     typer.echo("Listing all tracks in the library...")
-    
+
     client = Lexicon(host=host, port=port)
-    
+
     # Determine which fields to fetch
     default_fields = ["title", "artist", "albumTitle"]
     suggested_fields = ["bpm", "key", "genre", "year"]
-    
+
     # Override output format if --json is used
     if json_output:
         output_format = "json"
-    
+
     if output_format == "json" or not format_string:
         # For JSON output or when no format string, use --field options or defaults
         if fields:
@@ -82,21 +82,21 @@ def list_tracks(
                 raise typer.Exit(1)
     else:
         # Extract field names from format string
-        field_pattern = re.compile(r'\{(\w+)\}')
+        field_pattern = re.compile(r"\{(\w+)\}")
         format_fields = field_pattern.findall(format_string)
         display_fields = format_fields if format_fields else default_fields
-    
+
     # Always ensure id is included for fetching
     fetch_fields: list[TrackField] = display_fields  # type: ignore
     if "id" not in fetch_fields:
         fetch_fields.insert(0, "id")  # type: ignore
-    
+
     tracks = client.tracks.list(fields=fetch_fields)
-    
+
     if not tracks:
         typer.echo("No tracks found.")
         return
-    
+
     # Display tracks based on output format
     if output_format == "json":
         # Create a list with only the requested fields
@@ -124,13 +124,15 @@ def list_tracks(
                     if isinstance(value, list):
                         value = ", ".join(str(v) for v in value) if value else "N/A"
                     format_values[field] = value
-                
+
                 # Format and display
                 try:
                     output = format_string.format(**format_values)
                     typer.echo(f"  {output}")
                 except KeyError as e:
-                    typer.echo(f"  Error formatting track {track.get('id')}: Missing field {e}")
+                    typer.echo(
+                        f"  Error formatting track {track.get('id')}: Missing field {e}"
+                    )
         else:
             typer.echo(f"\nFound {len(tracks)} track(s):\n")
             # Always include ID first
@@ -138,12 +140,12 @@ def list_tracks(
                 track_id = track.get("id", "N/A")
                 prefix = f"[{track_id}] "
                 parts = []
-                
+
                 # Add requested fields
                 for field in display_fields:
                     if field == "id":
                         continue
                     value = format_value(track.get(field, ""))
                     parts.append(value)
-                
+
                 typer.echo(f"  {prefix}{' - '.join(parts)}")

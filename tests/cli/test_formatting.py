@@ -77,16 +77,16 @@ class TestFormatTable(unittest.TestCase):
     def test_format_table_basic(self):
         """Test basic table formatting."""
         result = format_table(self.sample_tracks, ["id", "title", "bpm"])
-        
+
         # Check for headers
         lines = result.split("\n")
         assert "id" in lines[0]
         assert "title" in lines[0]
         assert "bpm" in lines[0]
-        
+
         # Check for separator
         assert "-+-" in lines[1]
-        
+
         # Check for data rows
         assert "1" in result
         assert "Test Track" in result
@@ -102,7 +102,7 @@ class TestFormatTable(unittest.TestCase):
             }
         ]
         result = format_table(long_track, ["id", "title", "artist"], max_col_width=20)
-        
+
         # Check that the title is truncated
         assert "..." in result  # Should contain truncation indicator
         # The title should be truncated to 20 chars max
@@ -118,7 +118,7 @@ class TestFormatTable(unittest.TestCase):
             }
         ]
         result = format_table(incomplete_track, ["id", "title", "artist"])
-        
+
         assert "Test Track" in result
         # Missing field should show empty
 
@@ -151,7 +151,7 @@ class TestFormatPairs(unittest.TestCase):
     def test_format_pairs_single_track(self):
         """Test formatting single track in pairs format."""
         result = format_pairs(self.sample_tracks[:1], ["title", "artist", "bpm"])
-        
+
         # Check structure
         assert "Track 1" in result
         assert "ID: 1" in result
@@ -165,13 +165,13 @@ class TestFormatPairs(unittest.TestCase):
     def test_format_pairs_multiple_tracks(self):
         """Test formatting multiple tracks in pairs format."""
         result = format_pairs(self.sample_tracks, ["title", "artist"])
-        
+
         # Check both tracks are present
         assert "Track 1" in result
         assert "Track 2" in result
         assert "Test Track" in result
         assert "Another Song" in result
-        
+
         # Check that tracks are separated
         assert result.count("Track 1") == 1
         assert result.count("Track 2") == 1
@@ -179,12 +179,12 @@ class TestFormatPairs(unittest.TestCase):
     def test_format_pairs_skips_id_field(self):
         """Test that id field is not duplicated in pairs format."""
         result = format_pairs(self.sample_tracks[:1], ["id", "title", "artist"])
-        
+
         # id should appear only in header, not in field list
         assert "ID: 1" in result
         lines = result.split("\n")
         # Find lines that contain "id" field (should be none after the header)
-        field_lines = [l for l in lines if l.strip().startswith("id")]
+        field_lines = [line for line in lines if line.strip().startswith("id")]
         assert len(field_lines) == 0
 
     def test_format_pairs_handles_missing_fields(self):
@@ -197,6 +197,6 @@ class TestFormatPairs(unittest.TestCase):
             }
         ]
         result = format_pairs(incomplete_tracks, ["title", "artist"])
-        
+
         assert "Test Track" in result
         # Missing field should appear with empty value

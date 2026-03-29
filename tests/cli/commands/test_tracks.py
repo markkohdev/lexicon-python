@@ -121,9 +121,7 @@ class TestListTracks(unittest.TestCase):
     @patch("lexicon.cli.commands.tracks.Lexicon")
     def test_list_tracks_format_with_missing_field(self, mock_lexicon_class):
         """Test list-tracks with format string when field is missing."""
-        incomplete_tracks = [
-            {"id": 1, "title": "Test Track", "artist": "Test Artist"}
-        ]
+        incomplete_tracks = [{"id": 1, "title": "Test Track", "artist": "Test Artist"}]
         mock_client = MagicMock()
         mock_client.tracks.list.return_value = incomplete_tracks
         mock_lexicon_class.return_value = mock_client
@@ -146,9 +144,12 @@ class TestListTracks(unittest.TestCase):
             app,
             [
                 "list-tracks",
-                "-f", "title",
-                "-f", "albumTitle",
-                "--format", "{title} - {bpm}",
+                "-f",
+                "title",
+                "-f",
+                "albumTitle",
+                "--format",
+                "{title} - {bpm}",
             ],
         )
 
@@ -178,7 +179,15 @@ class TestListTracks(unittest.TestCase):
 
         result = self.runner.invoke(
             app,
-            ["list-tracks", "-f", "title", "-f", "artist", "--output-format", "compact"]
+            [
+                "list-tracks",
+                "-f",
+                "title",
+                "-f",
+                "artist",
+                "--output-format",
+                "compact",
+            ],
         )
 
         assert result.exit_code == 0
@@ -193,8 +202,7 @@ class TestListTracks(unittest.TestCase):
         mock_lexicon_class.return_value = mock_client
 
         result = self.runner.invoke(
-            app,
-            ["list-tracks", "-f", "title", "-f", "bpm", "--output-format", "table"]
+            app, ["list-tracks", "-f", "title", "-f", "bpm", "--output-format", "table"]
         )
 
         assert result.exit_code == 0
@@ -212,7 +220,7 @@ class TestListTracks(unittest.TestCase):
 
         result = self.runner.invoke(
             app,
-            ["list-tracks", "-f", "title", "-f", "artist", "--output-format", "pairs"]
+            ["list-tracks", "-f", "title", "-f", "artist", "--output-format", "pairs"],
         )
 
         assert result.exit_code == 0

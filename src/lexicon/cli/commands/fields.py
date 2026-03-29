@@ -24,11 +24,14 @@ def list_fields(
 ) -> None:
     """List available fields for a given entity type."""
     entity = entity.lower()
-    
+
     if entity not in ["track", "playlist", "tag"]:
-        typer.echo(f"Error: Unknown entity type '{entity}'. Valid types: track, playlist, tag", err=True)
+        typer.echo(
+            f"Error: Unknown entity type '{entity}'. Valid types: track, playlist, tag",
+            err=True,
+        )
         raise typer.Exit(1)
-    
+
     if entity == "track":
         if sortable:
             fields = SORT_FIELDS
@@ -36,15 +39,22 @@ def list_fields(
         else:
             fields = TRACK_FIELDS
             typer.echo(f"Available fields for tracks ({len(fields)}):\n")
-        
+
         for field in fields:
             typer.echo(f"  {field}")
-    
+
     elif entity == "playlist":
         # Playlist fields from PlaylistResponse TypedDict
         playlist_fields = (
-            "id", "name", "dateAdded", "type", "folderType", 
-            "parentId", "position", "trackIds", "smartlist"
+            "id",
+            "name",
+            "dateAdded",
+            "type",
+            "folderType",
+            "parentId",
+            "position",
+            "trackIds",
+            "smartlist",
         )
         if sortable:
             # Playlists don't have documented sortable fields, so return empty
@@ -53,7 +63,7 @@ def list_fields(
             typer.echo(f"Available fields for playlists ({len(playlist_fields)}):\n")
             for field in playlist_fields:
                 typer.echo(f"  {field}")
-    
+
     elif entity == "tag":
         # Tag fields from TagResponse TypedDict
         tag_fields = ("id", "label", "categoryId", "position")
