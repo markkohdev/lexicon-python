@@ -1,6 +1,8 @@
 # API/Docs Issues
 
 ## Incorrect or Incomplete OpenAPI Spec Documentation
+- `PATCH /v1/track` may return the updated track in `data` directly or at the top level, without a nested `data.track` object, while the OpenAPI spec documents `{"data": {"track": {...}}}`. The SDK accepts `data.track`, `data` when it contains a matching track `id`, `data.tracks` (single item or matching id), or a top-level track object.
+- `PATCH /v1/track` may return an empty JSON object `{}` on success (HTTP 200). In that case the SDK follows with `GET /v1/track` to return the updated track.
 - `POST /v1/tag` returns the tag object at the top level (no `data` wrapper), while the OpenAPI spec shows `{"data": {...}}`.
 - `PATCH /v1/tag` returns the tag object at the top level (no `data` wrapper), while the OpenAPI spec shows `{"data": {...}}`.
 - `POST /v1/tag-category` returns the category object at the top level (no `data` wrapper), while the OpenAPI spec shows `{"data": {...}}`.

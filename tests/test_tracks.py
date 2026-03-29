@@ -1,3 +1,4 @@
+import io
 import logging
 import sys
 from datetime import date, datetime
@@ -734,6 +735,62 @@ class TracksValidationTests(unittest.TestCase):
         with patch.object(self.tracks, "_patch", return_value={"data": {}}):
             result = self.tracks.update(1, {"title": "x"}, validation="off")
         self.assertIsNone(result)
+
+    def test_update_response_data_is_track_directly(self):
+        """Some API builds return the track in ``data`` without ``data.track``."""
+        response = {"data": {"id": 1, "title": "patched", "artist": "A"}}
+        with patch.object(self.tracks, "_patch", return_value=response):
+            result = self.tracks.update(1, {"title": "patched"}, validation="off")
+        self.assertEqual(result, {"id": 1, "title": "patched", "artist": "A"})
+
+    def test_update_response_top_level_track(self):
+        response = {"id": 1, "title": "patched"}
+        with patch.object(self.tracks, "_patch", return_value=response):
+            result = self.tracks.update(1, {"title": "patched"}, validation="off")
+        self.assertEqual(result, {"id": 1, "title": "patched"})
+
+    def test_update_response_data_tracks_singleton_list(self):
+        response = {"data": {"tracks": [{"id": 1, "title": "patched"}]}}
+        with patch.object(self.tracks, "_patch", return_value=response):
+            result = self.tracks.update(1, {"title": "patched"}, validation="off")
+        self.assertEqual(result, {"id": 1, "title": "patched"})
+
+    def test_update_response_string_id_in_data(self):
+        response = {"data": {"id": "1", "title": "patched"}}
+        with patch.object(self.tracks, "_patch", return_value=response):
+            result = self.tracks.update(1, {"title": "patched"}, validation="off")
+        self.assertEqual(result, {"id": "1", "title": "patched"})
+
+    def test_update_empty_object_refetches_track(self):
+        """Some API builds return ``{}`` on successful PATCH /track."""
+        with (
+            patch.object(self.tracks, "_patch", return_value={}),
+            patch.object(
+                self.tracks,
+                "get",
+                return_value={"id": 1, "title": "patched", "artist": "A"},
+            ),
+        ):
+            result = self.tracks.update(1, {"title": "patched"}, validation="off")
+        self.assertEqual(result, {"id": 1, "title": "patched", "artist": "A"})
+
+    def test_update_debug_includes_raw_json_when_unparseable(self):
+        bad = {"data": {"nested": {"weird": True}}}
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setLevel(logging.DEBUG)
+        lexicon_log = logging.getLogger("lexicon")
+        lexicon_log.setLevel(logging.DEBUG)
+        lexicon_log.addHandler(handler)
+        try:
+            with patch.object(self.tracks, "_patch", return_value=bad):
+                result = self.tracks.update(1, {"title": "x"}, validation="off")
+        finally:
+            lexicon_log.removeHandler(handler)
+        self.assertIsNone(result)
+        log_text = stream.getvalue()
+        self.assertIn("nested", log_text)
+        self.assertIn("PATCH /track", log_text)
 
     def test_update_no_valid_edits_warn(self):
         with patch(
