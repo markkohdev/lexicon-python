@@ -1,36 +1,33 @@
 #!/usr/bin/env python3
-"""Genre taxonomy cleanup: flatten .notes/genres.json, map library export, write bulk-update batches.
+"""Lexicon genre cleanup: export + backups, map library genres to a taxonomy, bulk-write native genre.
 
-High-level flow
----------------
-1. ``export`` — Run ``lexicon list-tracks --json`` and save a trimmed JSON array of tracks
-   (native ``genre`` string + ``tags`` per track).
+Phases
+------
+1. ``export`` — Run ``lexicon list-tracks --json``, write ``export.json`` plus timestamped backups
+   ``genre_backup_bulk_update_YYYYMMDDTHHMMSS.json`` and ``tags_backup_bulk_update_YYYYMMDDTHHMMSS.json``
+   from the same fetch.
 
-2. ``ensure-categories`` — Ensure Lexicon has tag categories ``Genre``, ``Sub-genre``,
-   ``Sub-sub-genre`` (needed before hierarchy tags can exist).
+2. ``map-genres`` — Read export + ``.notes/genres.txt`` + ``genre_aliases.json``; write inventory,
+   ``taxonomy_paths.json``, ``needs_review.md`` (+ optional ``needs_review.json``). Does **not**
+   write backups.
 
-3. ``analyze`` — Read export + hierarchical taxonomy + aliases; classify each track's
-   native ``genre`` field as a confident or uncertain taxonomy path; write inventory,
-   backups, and per–top-level-genre bulk-update batch JSON files for *tags*.
+3. ``write-genres`` — Emit bulk-update JSON (``id`` + ``genre``) only for **definitive** mappings.
+   Ambiguous or unknown source genres are omitted (tracks unchanged). Skips tracks whose genre
+   already matches a canonical taxonomy path.
 
-4. ``write-genre-native`` — Same mapping logic, but output bulk-update rows that set
-   the *native* ``genre`` field to ``Genre > Sub > Sub-sub`` (not tag IDs).
+4. ``review-genres`` — Interactive TUI (InquirerPy) to resolve review queue items and update
+   ``genre_aliases.json`` without hand-editing JSON.
 
-5. ``dry-run`` — Convenience wrapper around ``lexicon bulk-update --dry-run`` on a batch.
-
-Data sources
-------------
-- Taxonomy: nested JSON tree (top-level genre → children → …) under ``DEFAULT_TAXONOMY``.
-- Aliases: ``genre_aliases.json`` maps messy tokens / full strings to canonical paths.
-
-See repo plan: Lexicon genre cleanup (hierarchical tags).
+Taxonomy: indentation tree in ``.notes/genres.txt`` (2 spaces per level). Aliases: ``exact``
+(normalized full string → canonical `` > `` path) and ``aliases`` (token → replacement segment
+or path).
 
 Usage:
-  uv run python scripts/genre_taxonomy/genre_cleanup.py export -o output/export.json
-  uv run python scripts/genre_taxonomy/genre_cleanup.py analyze --export output/export.json
-  uv run python scripts/genre_taxonomy/genre_cleanup.py write-genre-native --export output/export.json
-  uv run python scripts/genre_taxonomy/genre_cleanup.py ensure-categories
-  uv run python scripts/genre_taxonomy/genre_cleanup.py dry-run --batch output/batches/all_confident.json
+  uv run python scripts/genre_taxonomy/genre_cleanup.py export --out-dir scripts/genre_taxonomy/output
+  uv run python scripts/genre_taxonomy/genre_cleanup.py map-genres --export scripts/genre_taxonomy/output/export.json
+  uv run python scripts/genre_taxonomy/genre_cleanup.py write-genres --export scripts/genre_taxonomy/output/export.json
+  uv run python scripts/genre_taxonomy/genre_cleanup.py dry-run --batch scripts/genre_taxonomy/output/bulk_update_genres.json
+  uv run python scripts/genre_taxonomy/genre_cleanup.py review-genres --export scripts/genre_taxonomy/output/export.json
 """
 
 from __future__ import annotations
@@ -40,28 +37,25 @@ import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from dataclasses import dataclass
-from datetime import date
-from enum import Enum
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 import typer
+from InquirerPy import inquirer
+from InquirerPy.base.control import Choice
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_TAXONOMY = SCRIPT_DIR.parent.parent / ".notes" / "genres.json"
+DEFAULT_TAXONOMY = SCRIPT_DIR.parent.parent / ".notes" / "genres.txt"
 DEFAULT_ALIASES = SCRIPT_DIR / "genre_aliases.json"
 OUTPUT_DIR = SCRIPT_DIR / "output"
-# Lexicon hierarchy tags use these prefixes (case-insensitive check in is_genre_hierarchy_label).
-GENRE_TAG_PREFIXES = ("genre:", "sub-genre:", "sub-sub-genre:")
-
-# Repo root so subprocesses can ``uv run lexicon`` with the right cwd.
 REPO_ROOT = SCRIPT_DIR.parent.parent
+INDENT_SPACES_PER_LEVEL = 2
 
 app = typer.Typer(help="Lexicon genre taxonomy cleanup helper")
 
 # ---------------------------------------------------------------------------
-# Export helper
+# JSON export slice
 # ---------------------------------------------------------------------------
 
 
@@ -72,11 +66,10 @@ def _strip_json_prefix(raw: str) -> str:
     j = raw.rfind("]")
     if j < i:
         raise ValueError("Unclosed JSON array")
-    # Some CLIs print banners or warnings before the JSON; we only need the array slice.
     return raw[i : j + 1]
 
 
-def run_lexicon_export(repo_root: Path, out_path: Path) -> None:
+def _fetch_tracks_json(repo_root: Path) -> list[dict[str, Any]]:
     cmd = [
         "uv",
         "run",
@@ -103,325 +96,740 @@ def run_lexicon_export(repo_root: Path, out_path: Path) -> None:
     )
     raw = proc.stdout
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"lexicon list-tracks failed ({proc.returncode}): {proc.stderr or raw[:500]}"
-        )
-    data = json.loads(_strip_json_prefix(raw))
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    print(f"Wrote {len(data)} tracks to {out_path}")
+        raise RuntimeError(f"lexicon list-tracks failed ({proc.returncode}): {proc.stderr or raw[:500]}")
+    return json.loads(_strip_json_prefix(raw))
+
+
+def run_export(
+    repo_root: Path,
+    out_dir: Path,
+    *,
+    backup_home: bool,
+) -> None:
+    """Write export.json, genre backup, tags backup under ``out_dir``."""
+    data = _fetch_tracks_json(repo_root)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    export_path = out_dir / "export.json"
+    export_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    print(f"Wrote {len(data)} tracks to {export_path}")
+
+    genre_rows: list[dict[str, Any]] = []
+    tag_rows: list[dict[str, Any]] = []
+    for t in data:
+        tid = t["id"]
+        g = (t.get("genre") or "").strip()
+        if g:
+            genre_rows.append({"id": tid, "genre": g})
+        tags = t.get("tags") or []
+        if isinstance(tags, list) and tags:
+            str_tags = [x for x in tags if isinstance(x, str)]
+            if str_tags:
+                tag_rows.append({"id": tid, "tags": str_tags})
+
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    gb = out_dir / f"genre_backup_bulk_update_{stamp}.json"
+    tb = out_dir / f"tags_backup_bulk_update_{stamp}.json"
+    gb.write_text(json.dumps(genre_rows, indent=2), encoding="utf-8")
+    tb.write_text(json.dumps(tag_rows, indent=2), encoding="utf-8")
+    print(f"Wrote {len(genre_rows)} genre backup rows to {gb}")
+    print(f"Wrote {len(tag_rows)} tags backup rows to {tb}")
+
+    if backup_home:
+        home_dir = Path.home() / f"lexicon-genre-backup-{date.today().isoformat()}"
+        home_dir.mkdir(parents=True, exist_ok=True)
+        (home_dir / gb.name).write_text(gb.read_text(encoding="utf-8"), encoding="utf-8")
+        (home_dir / tb.name).write_text(tb.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"Wrote home backup copies under {home_dir}")
 
 
 # ---------------------------------------------------------------------------
-# Taxonomy model: tree → flat paths and lookup indices
+# Taxonomy: genres.txt → paths
 # ---------------------------------------------------------------------------
 
-
-@dataclass(frozen=True)
-class GenrePath:
-    """One path through the taxonomy tree (genre may repeat across many paths).
-
-    ``labels()`` are Lexicon hierarchy tag strings (``Genre:…``, ``Sub-genre:…``).
-    ``to_lexicon_genre_field()`` is the native ``genre`` column format (`` > ``).
-    """
-
-    genre: str
-    subgenre: str | None
-    subsub: str | None
-
-    def labels(self) -> list[str]:
-        out = [f"Genre:{self.genre}"]
-        if self.subgenre:
-            out.append(f"Sub-genre:{self.subgenre}")
-        if self.subsub:
-            out.append(f"Sub-sub-genre:{self.subsub}")
-        return out
-
-    def slug(self) -> str:
-        parts = [self.genre]
-        if self.subgenre:
-            parts.append(self.subgenre)
-        if self.subsub:
-            parts.append(self.subsub)
-        return " / ".join(parts)
-
-    def to_lexicon_genre_field(self, sep: str = " > ") -> str:
-        """Native genre string for Lexicon (avoid ``/`` — some taxonomy names contain it)."""
-        parts = [self.genre]
-        if self.subgenre:
-            parts.append(self.subgenre)
-        if self.subsub:
-            parts.append(self.subsub)
-        return sep.join(parts)
+TaxonomyPath = tuple[str, ...]
 
 
-def _collect_paths(tree: list[dict[str, Any]]) -> list[GenrePath]:
-    """Flatten the nested taxonomy JSON into every valid ``GenrePath``.
+def parse_genres_txt(text: str) -> list[TaxonomyPath]:
+    """Parse indented tree; emit every visited prefix path (intermediate + leaf)."""
+    paths: list[TaxonomyPath] = []
+    seen: set[TaxonomyPath] = set()
+    stack: list[str] = []
 
-    Tree shape: each node is ``{"name": str, "children": [...]}``. We emit:
-    - paths ending at a **leaf** sub-genre (two levels under top); and
-    - **intermediate** paths where a tier is a valid stop (e.g. genre + sub only),
-      including when deeper children exist—so both "House → Tech House" and
-      "House tech house → Organic" style branches produce usable paths for matching.
-    """
-    paths: list[GenrePath] = []
+    def record() -> None:
+        tup = tuple(stack)
+        if tup not in seen:
+            seen.add(tup)
+            paths.append(tup)
 
-    def walk_sub(genre: str, node: dict[str, Any]) -> None:
-        """First level under top-level genre: this node's ``name`` is a sub-genre."""
-        name = node["name"]
-        kids = node.get("children") or []
-        if not kids:
-            paths.append(GenrePath(genre, name, None))
-            return
-        # Sub-genre has children: still record Genre + this sub-genre (no leaf sub-sub).
-        paths.append(GenrePath(genre, name, None))
-        for ch in kids:
-            walk_subsub(genre, name, ch)
-
-    def walk_subsub(genre: str, sub: str, node: dict[str, Any]) -> None:
-        """Second level: ``name`` is either a leaf sub-sub-genre or a branch name."""
-        name = node["name"]
-        kids = node.get("children") or []
-        if not kids:
-            paths.append(GenrePath(genre, sub, name))
-            return
-        paths.append(GenrePath(genre, sub, name))
-        # Deeper nesting: treat each child's name as additional sub-sub slugs (one hop).
-        for ch in kids:
-            ss = ch["name"]
-            paths.append(GenrePath(genre, sub, ss))
-
-    for top in tree:
-        g = top["name"]
-        for ch in top.get("children") or []:
-            walk_sub(g, ch)
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        depth = indent // INDENT_SPACES_PER_LEVEL
+        name = line.strip()
+        while len(stack) > depth:
+            stack.pop()
+        if len(stack) != depth:
+            raise ValueError(f"Invalid indent in genres.txt at line {line!r}: depth {depth}, stack depth {len(stack)}")
+        stack.append(name)
+        record()
     return paths
 
 
+def path_to_field(p: TaxonomyPath, sep: str = " > ") -> str:
+    return sep.join(p)
+
+
 def _norm_token(s: str) -> str:
-    """Normalize a single segment for matching (lower case, collapse whitespace)."""
     s = s.strip().lower()
     s = re.sub(r"\s+", " ", s)
     return s
 
 
-def _load_aliases(path: Path) -> tuple[dict[str, str], dict[str, list[str]]]:
-    if not path.is_file():
-        return {}, {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    # Token-level rewrites applied inside slash-split paths (see match_genre_field).
-    raw = data.get("aliases") or {}
-    aliases = {_norm_token(k): v for k, v in raw.items()}
-    # Full native genre string → precomputed hierarchy tag list (bypass fuzzy match).
-    exact: dict[str, list[str]] = {}
-    for k, v in (data.get("exact_genres") or {}).items():
-        if isinstance(v, list) and all(isinstance(x, str) for x in v):
-            exact[_norm_full_genre_key(k)] = v
-    return aliases, exact
+def _norm_genre_field(s: str) -> str:
+    """Normalize native genre string for equality (canonical skip)."""
+    s = (s or "").strip()
+    s = re.sub(r"\s*>\s*", " > ", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.lower()
+
+
+def _path_key(p: TaxonomyPath) -> str:
+    return "/".join(_norm_token(x) for x in p)
+
+
+def canonical_native_strings(paths: list[TaxonomyPath]) -> set[str]:
+    return {_norm_genre_field(path_to_field(p)) for p in paths}
+
+
+def _build_indices(paths: list[TaxonomyPath]) -> dict[str, list[TaxonomyPath]]:
+    by_token: dict[str, list[TaxonomyPath]] = defaultdict(list)
+
+    def add(tok: str, p: TaxonomyPath) -> None:
+        key = _norm_token(tok)
+        if p not in by_token[key]:
+            by_token[key].append(p)
+
+    for p in paths:
+        for seg in p:
+            add(seg, p)
+    return by_token
+
+
+def _top_level_map(paths: list[TaxonomyPath]) -> dict[str, str]:
+    """Normalized root name -> canonical spelling."""
+    out: dict[str, str] = {}
+    for p in paths:
+        if len(p) >= 1:
+            root = p[0]
+            n = _norm_token(root)
+            out.setdefault(n, root)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Aliases
+# ---------------------------------------------------------------------------
 
 
 def _norm_full_genre_key(s: str) -> str:
-    """Key for exact_genres: same idea as path matching (slashes normalized to `` / ``)."""
     s = s.strip().lower()
     s = re.sub(r"\s*[/|;]+\s*", " / ", s)
     s = re.sub(r"\s+", " ", s)
     return s
 
 
-def _build_indices(paths: list[GenrePath]) -> dict[str, list[GenrePath]]:
-    """Map normalized token -> paths where token appears as genre, subgenre, or subsub."""
-    by_token: dict[str, list[GenrePath]] = defaultdict(list)
+def load_aliases(path: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Return (token_aliases, exact_norm_key -> canonical path string)."""
+    if not path.is_file():
+        return {}, {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    raw_a = data.get("aliases") or {}
+    aliases = {_norm_token(str(k)): str(v) for k, v in raw_a.items()}
+    exact: dict[str, str] = {}
+    raw_e = data.get("exact") or data.get("exact_genres") or {}
+    for k, v in raw_e.items():
+        if isinstance(v, str):
+            exact[_norm_full_genre_key(str(k))] = v.strip()
+        elif isinstance(v, list) and v and all(isinstance(x, str) for x in v):
+            exact[_norm_full_genre_key(str(k))] = _labels_list_to_path(v)
+    return aliases, exact
 
-    def add(tok: str, p: GenrePath) -> None:
-        key = _norm_token(tok)
-        if p not in by_token[key]:
-            by_token[key].append(p)
 
+def _labels_list_to_path(labels: list[str]) -> str:
+    """Legacy Genre: / Sub-genre: tags → Lexicon native path."""
+    parts: list[str] = []
+    for raw in labels:
+        low = raw.lower()
+        if low.startswith("genre:"):
+            parts.append(raw.split(":", 1)[1])
+        elif low.startswith("sub-genre:"):
+            parts.append(raw.split(":", 1)[1])
+        elif low.startswith("sub-sub-genre:"):
+            parts.append(raw.split(":", 1)[1])
+    return path_to_field(tuple(parts))
+
+
+def save_genre_aliases(
+    path: Path,
+    *,
+    merge_exact: dict[str, str] | None = None,
+    merge_aliases: dict[str, str] | None = None,
+) -> None:
+    """Merge into ``exact`` / ``aliases`` and write JSON (stable sort, drops legacy keys)."""
+    data: dict[str, Any] = {"exact": {}, "aliases": {}}
+    if path.is_file():
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        ex = dict(raw.get("exact") or {})
+        if not ex and raw.get("exact_genres"):
+            raise ValueError(f"{path} uses legacy exact_genres; migrate ``exact`` to string paths first.")
+        if any(not isinstance(v, str) for v in ex.values()):
+            raise ValueError(f"{path}: all ``exact`` values must be strings (canonical paths).")
+        data["exact"] = {str(k): str(v) for k, v in ex.items()}
+        al = raw.get("aliases") or {}
+        data["aliases"] = {str(k): str(v) for k, v in al.items()}
+    if merge_exact:
+        for k, v in merge_exact.items():
+            data["exact"][str(k).strip()] = str(v).strip()
+    if merge_aliases:
+        for k, v in merge_aliases.items():
+            data["aliases"][str(k).strip()] = str(v).strip()
+    data.pop("exact_genres", None)
+    exact_clean = {k: v for k, v in data["exact"].items() if isinstance(v, str)}
+    alias_clean = {k: v for k, v in data["aliases"].items() if isinstance(v, str)}
+    out = {
+        "exact": dict(sorted(exact_clean.items(), key=lambda x: x[0].lower())),
+        "aliases": dict(sorted(alias_clean.items(), key=lambda x: x[0].lower())),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
+
+
+def _raw_genre_segment_tokens(g: str) -> list[str]:
+    """Split raw genre into tokens for matching (Lexicon uses `` > ``, tags often use ``/`` or ``|``)."""
+    s = (g or "").strip()
+    if not s:
+        return []
+    compound = re.sub(r"\s*>\s*", "/", s)
+    normalized = re.sub(r"\s*[/|;]+\s*", "/", compound)
+    return [p.strip() for p in normalized.split("/") if p.strip()]
+
+
+def resolve_canonical_path_string(typed: str, paths: list[TaxonomyPath]) -> str | None:
+    """Return canonical `` > `` path if ``typed`` matches a taxonomy path (spacing-normalized)."""
+    t = typed.strip()
+    if not t:
+        return None
+    n = _norm_genre_field(t)
     for p in paths:
-        add(p.genre, p)
-        if p.subgenre:
-            add(p.subgenre, p)
-        if p.subsub:
-            add(p.subsub, p)
-    return by_token
+        if _norm_genre_field(path_to_field(p)) == n:
+            return path_to_field(p)
+    return None
 
 
-def _path_key(p: GenrePath) -> str:
-    """Stable normalized key for comparing a taxonomy path to slash-split input."""
-    return "/".join(
-        _norm_token(x) for x in (p.genre, p.subgenre or "", p.subsub or "") if x
-    )
+def candidate_paths_for_raw(
+    raw: str,
+    paths: list[TaxonomyPath],
+    by_token: dict[str, list[TaxonomyPath]],
+    token_aliases: dict[str, str],
+) -> list[str]:
+    """Paths the matcher might have been torn between (for quick-pick); may be empty."""
+    g = (raw or "").strip()
+    if not g:
+        return []
 
+    canon = resolve_canonical_path_string(g, paths)
+    if canon:
+        return [canon]
 
-def _top_level_map(tree: list[dict[str, Any]]) -> dict[str, str]:
-    """Map normalized top-level name to canonical spelling (preserves original casing)."""
-    return {_norm_token(t["name"]): t["name"] for t in tree}
+    def apply_alias_token(token: str) -> str:
+        n = _norm_token(token)
+        return token_aliases.get(n, token.strip())
+
+    parts = [apply_alias_token(p) for p in _raw_genre_segment_tokens(g)]
+    parts_norm = [_norm_token(p) for p in parts]
+
+    if len(parts) >= 2:
+        candidates = list(paths)
+        for i, pn in enumerate(parts_norm):
+            candidates = [p for p in candidates if len(p) > i and _norm_token(p[i]) == pn]
+        if len(candidates) > 1:
+            return sorted({path_to_field(p) for p in candidates})
+
+    if len(parts) == 1:
+        tok = _norm_token(parts[0])
+        cand = by_token.get(tok, [])
+        if len(cand) > 1:
+            return sorted({path_to_field(p) for p in cand})
+    return []
 
 
 # ---------------------------------------------------------------------------
-# Native ``genre`` string → taxonomy (labels + confidence)
+# Matching: raw genre → (canonical path | None, confidence, reason)
 # ---------------------------------------------------------------------------
 
 
 def match_genre_field(
     genre_field: str,
-    paths: list[GenrePath],
-    by_token: dict[str, list[GenrePath]],
-    aliases: dict[str, str],
-    exact_genres: dict[str, list[str]],
+    paths: list[TaxonomyPath],
+    by_token: dict[str, list[TaxonomyPath]],
+    token_aliases: dict[str, str],
+    exact: dict[str, str],
     top_level: dict[str, str],
-) -> tuple[list[str] | None, str, str]:
-    """Map a track's native ``genre`` string to hierarchy tag labels.
-
-    Returns ``(hierarchy_labels, confidence, reason)``. ``hierarchy_labels`` is
-    ``None`` when we cannot map. Order of attempts:
-
-    1. ``exact_genres`` table (full string).
-    2. Split on ``/``, ``|``, ``;``; apply token ``aliases``; join segments and
-       compare to every ``GenrePath`` via ``_path_key``.
-    3. Single segment: top-level genre only, or unique token among paths, or
-       disambiguate by preferring sub-sub / sub-tier-only matches.
-    4. Multi-segment: filter candidate paths segment-by-segment; exactly one
-       candidate → high confidence; zero / many → none / ambiguous.
+) -> tuple[str | None, str, str]:
+    """
+    Returns ``(canonical_path, confidence, reason)``. ``canonical_path`` is ``None`` when
+    not definitively mapped (ambiguous / unknown / empty).
     """
     g = (genre_field or "").strip()
     if not g:
         return None, "skip", "empty genre"
 
-    def apply_alias(token: str) -> str:
+    def apply_alias_token(token: str) -> str:
         n = _norm_token(token)
-        return aliases.get(n, token.strip())
+        return token_aliases.get(n, token.strip())
 
     exact_key = _norm_full_genre_key(g)
-    if exact_key in exact_genres:
-        return list(exact_genres[exact_key]), "high", "exact_genres alias"
+    if exact_key in exact:
+        return exact[exact_key], "high", "exact alias"
 
-    # Full-string path: "House / Tech House" or "House/Tech House"
-    normalized_slash = re.sub(r"\s*[/|;]+\s*", "/", g)
-    parts = [apply_alias(p) for p in normalized_slash.split("/") if p.strip()]
+    canon = resolve_canonical_path_string(g, paths)
+    if canon:
+        return canon, "high", "canonical path"
+
+    parts = [apply_alias_token(p) for p in _raw_genre_segment_tokens(g)]
     parts_norm = [_norm_token(p) for p in parts]
 
-    # Exact path match
     key = "/".join(parts_norm)
     for p in paths:
         if _path_key(p) == key:
-            return p.labels(), "high", "exact path"
+            return path_to_field(p), "high", "exact path"
 
-    # Single segment after alias
     if len(parts) == 1:
         tok = _norm_token(parts[0])
         if tok in top_level:
-            return [f"Genre:{top_level[tok]}"], "high", "top-level genre only"
+            return top_level[tok], "high", "top-level genre only"
         cand = by_token.get(tok, [])
         if len(cand) == 1:
-            return cand[0].labels(), "high", "unique token"
+            return path_to_field(cand[0]), "high", "unique token"
         if not cand:
             return None, "none", "unknown token"
-        # Same token appears in multiple paths—pick a unique interpretation when possible:
-        # prefer the path where this token is the sub-sub label, else the path where it is
-        # a sub-genre "tier" (subgenre set, subsub empty), before giving up as ambiguous.
-        best = [c for c in cand if c.subsub and _norm_token(c.subsub) == tok]
-        if len(best) == 1:
-            return best[0].labels(), "high", "unique sub-sub match"
-        sub_tier = [
-            c
-            for c in cand
-            if c.subgenre and _norm_token(c.subgenre) == tok and c.subsub is None
-        ]
+        leaf_matches = [c for c in cand if _norm_token(c[-1]) == tok]
+        if len(leaf_matches) == 1:
+            return path_to_field(leaf_matches[0]), "high", "unique leaf match"
+        sub_tier = [c for c in cand if len(c) == 2 and _norm_token(c[1]) == tok]
         if len(sub_tier) == 1:
-            return sub_tier[0].labels(), "high", "unique sub-genre tier"
+            return path_to_field(sub_tier[0]), "high", "unique two-segment tier"
         return None, "ambiguous", f"{len(cand)} paths for token"
 
-    # Multi-segment: walk genre / sub / sub-sub in order
-    if len(parts_norm) >= 2:
-        candidates = list(paths)
-        for i, pn in enumerate(parts_norm):
-            if i == 0:
-                candidates = [p for p in candidates if _norm_token(p.genre) == pn]
-            elif i == 1:
-                candidates = [
-                    p
-                    for p in candidates
-                    if p.subgenre and _norm_token(p.subgenre) == pn
-                ]
-            elif i == 2:
-                candidates = [
-                    p for p in candidates if p.subsub and _norm_token(p.subsub) == pn
-                ]
-        if len(candidates) == 1:
-            return candidates[0].labels(), "high", "multi-segment path"
-        if len(candidates) > 1:
-            return None, "ambiguous", "multi-segment multiple"
+    candidates = list(paths)
+    for i, pn in enumerate(parts_norm):
+        nxt = [p for p in candidates if len(p) > i and _norm_token(p[i]) == pn]
+        candidates = nxt
+    if len(candidates) == 1:
+        return path_to_field(candidates[0]), "high", "multi-segment path"
+    if len(candidates) > 1:
+        return None, "ambiguous", "multi-segment multiple"
 
     return None, "none", "unmatched compound"
 
 
 # ---------------------------------------------------------------------------
-# Tags vs. native genre field helpers
+# map-genres
 # ---------------------------------------------------------------------------
 
 
-def is_genre_hierarchy_label(label: str) -> bool:
-    lower = label.lower()
-    return lower.startswith(GENRE_TAG_PREFIXES)
+def _tracks_for_genre(tracks: list[dict[str, Any]], raw: str) -> list[dict[str, Any]]:
+    return [t for t in tracks if (t.get("genre") or "").strip() == raw]
 
 
-def strip_genre_tags(tag_labels: list[str]) -> list[str]:
-    """Remove old hierarchy tags so we can replace with canonical taxonomy tags."""
-    return [t for t in tag_labels if not is_genre_hierarchy_label(t)]
+def _top_artists(trs: list[dict[str, Any]], n: int = 8) -> list[str]:
+    c: Counter[str] = Counter()
+    for t in trs:
+        a = (t.get("artist") or "").strip()
+        if a:
+            c[a] += 1
+    return [a for a, _ in c.most_common(n)]
 
 
-def labels_to_lexicon_genre_field(hierarchy_labels: list[str], sep: str = " > ") -> str:
-    """Build ``Genre > Sub-genre > Sub-sub-genre`` from ``Category:Label`` hierarchy tags."""
-    genre = sub = subsub = None
-    for raw in hierarchy_labels:
-        low = raw.lower()
-        if low.startswith("genre:"):
-            genre = raw.split(":", 1)[1]
-        elif low.startswith("sub-genre:"):
-            sub = raw.split(":", 1)[1]
-        elif low.startswith("sub-sub-genre:"):
-            subsub = raw.split(":", 1)[1]
-    parts = [x for x in (genre, sub, subsub) if x]
-    return sep.join(parts)
+def _build_review_queue(
+    tracks: list[dict[str, Any]],
+    paths: list[TaxonomyPath],
+    token_aliases: dict[str, str],
+    exact: dict[str, str],
+    top_level: dict[str, str],
+) -> tuple[Counter[str], list[dict[str, Any]]]:
+    """Unique raw genres needing human review (not high-confidence mapped)."""
+    by_token = _build_indices(paths)
+    genre_counts: Counter[str] = Counter()
+    for t in tracks:
+        g = (t.get("genre") or "").strip()
+        if g:
+            genre_counts[g] += 1
+    review_items: list[dict[str, Any]] = []
+    for raw, count in genre_counts.most_common():
+        canon, conf, reason = match_genre_field(raw, paths, by_token, token_aliases, exact, top_level)
+        if canon is not None and conf == "high":
+            continue
+        trs = _tracks_for_genre(tracks, raw)
+        artists = _top_artists(trs)
+        samples = _sample_tracks(trs)
+        norm_key = _norm_full_genre_key(raw)
+        action = (
+            "Decide the canonical path, then add one `exact` entry in "
+            "`scripts/genre_taxonomy/genre_aliases.json` (or an `aliases` token if appropriate)."
+        )
+        review_items.append(
+            {
+                "raw_genre": raw,
+                "track_count": count,
+                "reason": reason,
+                "confidence": conf,
+                "action": action,
+                "top_artists": artists,
+                "sample_tracks": samples,
+                "exact_entry_template": {norm_key: "CANONICAL_PATH"},
+                "normalized_exact_key": norm_key,
+            }
+        )
+    return genre_counts, review_items
+
+
+def _sample_tracks(trs: list[dict[str, Any]], n: int = 5) -> list[dict[str, Any]]:
+    seen: set[Any] = set()
+    out: list[dict[str, Any]] = []
+    for t in trs:
+        tid = t.get("id")
+        if tid in seen:
+            continue
+        seen.add(tid)
+        out.append(
+            {
+                "id": tid,
+                "title": t.get("title"),
+                "artist": t.get("artist"),
+            }
+        )
+        if len(out) >= n:
+            break
+    return out
+
+
+def map_genres(
+    export_path: Path,
+    taxonomy_path: Path,
+    aliases_path: Path,
+    out_dir: Path,
+    *,
+    write_review_json: bool,
+) -> None:
+    tracks = json.loads(export_path.read_text(encoding="utf-8"))
+    tree_text = taxonomy_path.read_text(encoding="utf-8")
+    paths = parse_genres_txt(tree_text)
+    token_aliases, exact = load_aliases(aliases_path)
+    top_level = _top_level_map(paths)
+    genre_counts: Counter[str] = Counter()
+    tag_counts: Counter[str] = Counter()
+    missing_signal: list[dict[str, Any]] = []
+
+    for t in tracks:
+        g = (t.get("genre") or "").strip()
+        if g:
+            genre_counts[g] += 1
+        tags = t.get("tags") or []
+        if isinstance(tags, list):
+            for tag in tags:
+                if isinstance(tag, str):
+                    tag_counts[tag] += 1
+        if not g:
+            missing_signal.append(
+                {
+                    "id": t.get("id"),
+                    "title": t.get("title"),
+                    "artist": t.get("artist"),
+                }
+            )
+
+    inventory = {
+        "track_count": len(tracks),
+        "unique_genres": len(genre_counts),
+        "genre_counts": dict(genre_counts.most_common()),
+        "unique_track_tags": len(tag_counts),
+        "tag_counts": dict(tag_counts.most_common(200)),
+        "tracks_empty_genre": len(missing_signal),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "genre_inventory.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
+    (out_dir / "tracks_missing_genre.json").write_text(json.dumps(missing_signal, indent=2), encoding="utf-8")
+
+    flat = [{"path": path_to_field(p), "segments": list(p)} for p in paths]
+    (out_dir / "taxonomy_paths.json").write_text(json.dumps(flat, indent=2), encoding="utf-8")
+    print(f"Wrote {len(paths)} taxonomy paths to {out_dir / 'taxonomy_paths.json'}")
+
+    _, review_items = _build_review_queue(tracks, paths, token_aliases, exact, top_level)
+
+    lines: list[str] = [
+        "# Genre mapping — needs review",
+        "",
+        "Sections are ordered by **track count** (highest first).",
+        "**Unresolved items here are not modified** by `write-genres` until you add an `exact` or `aliases` entry in `genre_aliases.json` and re-run `map-genres`.",
+        "",
+        "## How to resolve",
+        "",
+        "1. Pick a canonical path from `.notes/genres.txt`.",
+        "2. Add it under `exact` in `scripts/genre_taxonomy/genre_aliases.json` (normalized key is noted per section).",
+        "3. Re-run `map-genres`, then `write-genres`.",
+        "",
+    ]
+
+    for item in review_items:
+        raw = item["raw_genre"]
+        count = item["track_count"]
+        reason = item["reason"]
+        conf = item["confidence"]
+        action = item["action"]
+        artists = item["top_artists"]
+        samples = item["sample_tracks"]
+        norm_key = item["normalized_exact_key"]
+        entry_template = item["exact_entry_template"]
+
+        esc = raw.replace("`", "\\`")
+        lines.append(f"### `{esc}`")
+        lines.append("")
+        lines.append(f"- **Impact:** {count} tracks — **Reason:** {reason} (`{conf}`)")
+        lines.append("- **Context:**")
+        lines.append("  - Artists: " + (", ".join(artists) if artists else "(none)"))
+        for s in samples:
+            artist = s.get("artist") or ""
+            title = s.get("title") or ""
+            lines.append(f"  - {artist} — {title}")
+        lines.append(f"- **Action:** {action}")
+        lines.append(
+            f"- **Copy-paste:** merge under `exact` using normalized key `{norm_key}`... (see JSON block below)."
+        )
+        lines.append("")
+        lines.append("```json")
+        lines.append(json.dumps(entry_template, indent=2))
+        lines.append("```")
+        lines.append("")
+
+    md_path = out_dir / "needs_review.md"
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"Wrote {md_path} ({len(review_items)} section(s))")
+
+    if write_review_json:
+        jpath = out_dir / "needs_review.json"
+        jpath.write_text(json.dumps(review_items, indent=2), encoding="utf-8")
+        print(f"Wrote {jpath}")
 
 
 # ---------------------------------------------------------------------------
-# Commands (core logic)
+# Interactive review (InquirerPy)
 # ---------------------------------------------------------------------------
 
 
-def write_genre_native(
+def review_genres_interactive(
+    export_path: Path,
+    taxonomy_path: Path,
+    aliases_path: Path,
+) -> None:
+    tracks = json.loads(export_path.read_text(encoding="utf-8"))
+    paths = parse_genres_txt(taxonomy_path.read_text(encoding="utf-8"))
+    taxonomy_strings = sorted({path_to_field(p) for p in paths})
+    top_level = _top_level_map(paths)
+    by_token = _build_indices(paths)
+    skipped_session: set[str] = set()
+
+    typer.secho(
+        "Interactive genre review — edits save to genre_aliases.json immediately. " "Ctrl+C to stop.\n",
+        fg=typer.colors.CYAN,
+    )
+    while True:
+        try:
+            token_aliases, exact = load_aliases(aliases_path)
+            _, queue = _build_review_queue(tracks, paths, token_aliases, exact, top_level)
+            queue = [x for x in queue if x["raw_genre"] not in skipped_session]
+            if not queue:
+                typer.secho("Nothing left to review.", fg=typer.colors.GREEN)
+                break
+
+            item = queue[0]
+            raw = item["raw_genre"]
+            typer.echo("")
+            typer.echo("=" * 72)
+            typer.secho(f"Raw genre: {raw!r}", bold=True)
+            typer.echo(f"Tracks: {item['track_count']}  |  {item['reason']} ({item['confidence']})")
+            if item["top_artists"]:
+                typer.echo("Artists: " + ", ".join(item["top_artists"][:8]))
+            for s in item["sample_tracks"][:5]:
+                typer.echo(f"  • {s.get('artist') or ''} — {s.get('title') or ''}")
+
+            hints = candidate_paths_for_raw(raw, paths, by_token, token_aliases)
+            if hints:
+                typer.echo(f"Matcher candidates: {', '.join(hints[:6])}")
+
+            action = inquirer.select(
+                message="What do you want to do?",
+                choices=[
+                    Choice(
+                        value="pick",
+                        name="Pick canonical path (fuzzy search full taxonomy)",
+                    ),
+                    Choice(
+                        value="type",
+                        name="Type canonical path (must match genres.txt)",
+                    ),
+                    Choice(
+                        value="delete",
+                        name="Clear genre for all tracks with this raw value (set empty)",
+                    ),
+                    Choice(
+                        value="list_all",
+                        name=(f"List all {item['track_count']} tracks, then choose an action"),
+                    ),
+                    Choice(
+                        value="alias",
+                        name="Add token alias (rewrite one segment, e.g. hip hop → Hip-Hop)",
+                    ),
+                    Choice(value="skip", name="Skip this genre for this session"),
+                    Choice(value="quit", name="Quit reviewer"),
+                ],
+            ).execute()
+
+            if action == "quit":
+                typer.echo("Bye.")
+                break
+            if action == "skip":
+                skipped_session.add(raw)
+                continue
+
+            if action == "list_all":
+                all_trs = _tracks_for_genre(tracks, raw)
+                typer.echo("")
+                for t in all_trs:
+                    artist = (t.get("artist") or "").strip()
+                    title = (t.get("title") or "").strip()
+                    tid = t.get("id")
+                    line = f"  • {artist} — {title}"
+                    if tid is not None:
+                        line += f"  [id {tid}]"
+                    typer.echo(line)
+                typer.echo(f"\n({len(all_trs)} track(s) with raw genre {raw!r})")
+                continue
+
+            if action == "pick":
+                initial = hints[0] if len(hints) == 1 else ""
+                chosen = inquirer.fuzzy(
+                    message="Canonical path:",
+                    choices=taxonomy_strings,
+                    default=initial,
+                ).execute()
+                canon = resolve_canonical_path_string(chosen, paths)
+                if not canon:
+                    typer.secho("Could not resolve choice — try again.", fg=typer.colors.RED)
+                    continue
+                save_genre_aliases(aliases_path, merge_exact={raw: canon})
+                typer.secho(f"Saved exact[{raw!r}] → {canon!r}", fg=typer.colors.GREEN)
+
+            elif action == "type":
+                typed = inquirer.text(
+                    message="Canonical path (use ' > ' between segments):",
+                    validate=lambda t: bool((t or "").strip()) and resolve_canonical_path_string(t, paths) is not None,
+                    invalid_message="Must match a path from genres.txt (spacing can differ slightly).",
+                ).execute()
+                canon = resolve_canonical_path_string(typed, paths)
+                if not canon:
+                    typer.secho("Invalid path.", fg=typer.colors.RED)
+                    continue
+                save_genre_aliases(aliases_path, merge_exact={raw: canon})
+                typer.secho(f"Saved exact[{raw!r}] → {canon!r}", fg=typer.colors.GREEN)
+
+            elif action == "delete":
+                confirm = inquirer.confirm(
+                    message=(f"Set genre to empty string for ALL tracks whose raw genre is {raw!r}?"),
+                    default=False,
+                ).execute()
+                if not confirm:
+                    continue
+                # Store as an exact alias to empty string; matcher treats it as high-confidence
+                # and write-genres will emit edits setting genre to "".
+                save_genre_aliases(aliases_path, merge_exact={raw: ""})
+                typer.secho(
+                    f"Will clear genre for tracks with raw genre {raw!r} " "(exact mapping to empty string).",
+                    fg=typer.colors.YELLOW,
+                )
+
+            elif action == "alias":
+                tok = (
+                    inquirer.text(
+                        message="Token to rewrite (lowercase messy segment, e.g. hip hop):",
+                        validate=lambda t: bool((t or "").strip()),
+                    )
+                    .execute()
+                    .strip()
+                )
+                repl = (
+                    inquirer.text(
+                        message="Replace with (segment or full path from taxonomy):",
+                        validate=lambda t: bool((t or "").strip()),
+                    )
+                    .execute()
+                    .strip()
+                )
+                if "/" in repl or "|" in repl:
+                    typer.secho(
+                        "Use full path keys under ``exact`` for compound strings; "
+                        "aliases are single-segment rewrites.",
+                        fg=typer.colors.YELLOW,
+                    )
+                save_genre_aliases(aliases_path, merge_aliases={tok: repl})
+                typer.secho(
+                    f"Saved aliases[{tok!r}] → {repl!r}",
+                    fg=typer.colors.GREEN,
+                )
+
+        except KeyboardInterrupt:
+            typer.echo("\nStopped.")
+            break
+
+
+# ---------------------------------------------------------------------------
+# write-genres
+# ---------------------------------------------------------------------------
+
+
+def write_genres(
     export_path: Path,
     taxonomy_path: Path,
     aliases_path: Path,
     out_path: Path,
-    confidence: str,
     *,
     dry_run: bool,
     repo_root: Path,
 ) -> None:
-    """Write bulk-update JSON setting native ``genre`` to ``A > B > C`` for mapped tracks.
-
-    Unlike ``analyze``, this does not merge tags—only emits ``{"id", "genre"}`` rows.
-    ``confidence`` filters which match_genre_field results are included (only ``high``
-    by default; ``medium`` is accepted if ``--confidence all``).
-    """
     tracks = json.loads(export_path.read_text(encoding="utf-8"))
-    tree = json.loads(taxonomy_path.read_text(encoding="utf-8"))
-    aliases, exact_genres = _load_aliases(aliases_path)
-    paths = _collect_paths(tree)
+    tree_text = taxonomy_path.read_text(encoding="utf-8")
+    paths = parse_genres_txt(tree_text)
+    token_aliases, exact = load_aliases(aliases_path)
     by_token = _build_indices(paths)
-    top_level = _top_level_map(tree)
+    top_level = _top_level_map(paths)
+    canon_set = canonical_native_strings(paths)
 
-    # write-genre-native currently only gets "high" from the matcher; hook preserves
-    # parity with analyze if medium confidence is introduced later.
-    allowed_conf = {"high"} if confidence == "high" else {"high", "medium"}
+    raw_to_result: dict[str, tuple[str | None, str, str]] = {}
+    for t in tracks:
+        g = (t.get("genre") or "").strip()
+        if not g:
+            continue
+        if g not in raw_to_result:
+            raw_to_result[g] = match_genre_field(g, paths, by_token, token_aliases, exact, top_level)
 
     edits: list[dict[str, str | int]] = []
     skipped_empty = 0
-    skipped_unmapped = 0
-    skipped_confidence = 0
+    skipped_already_canonical = 0
+    skipped_not_definitive = 0
+    reasons: Counter[str] = Counter()
 
     for t in tracks:
         tid = t["id"]
@@ -429,28 +837,29 @@ def write_genre_native(
         if not g:
             skipped_empty += 1
             continue
-        hierarchy_labels, conf, _reason = match_genre_field(
-            g, paths, by_token, aliases, exact_genres, top_level
-        )
-        if hierarchy_labels is None or conf in ("skip", "none", "ambiguous"):
-            skipped_unmapped += 1
+        if _norm_genre_field(g) in canon_set:
+            skipped_already_canonical += 1
             continue
-        if conf not in allowed_conf:
-            skipped_confidence += 1
+        canon, conf, reason = raw_to_result[g]
+        if canon is None or conf != "high":
+            skipped_not_definitive += 1
+            reasons[reason] += 1
             continue
-        # Lexicon native genre: use `` > `` so ``/`` inside a genre name stays unambiguous.
-        native = labels_to_lexicon_genre_field(hierarchy_labels)
-        edits.append({"id": tid, "genre": native})
+        if _norm_genre_field(canon) == _norm_genre_field(g):
+            skipped_already_canonical += 1
+            continue
+        edits.append({"id": tid, "genre": canon})
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(edits, indent=2), encoding="utf-8")
     print(
-        f"Wrote {len(edits)} genre field edits to {out_path} "
-        f"(confidence={confidence!r}; skipped empty={skipped_empty}, "
-        f"unmapped={skipped_unmapped}, confidence_filter={skipped_confidence})"
+        f"Wrote {len(edits)} genre edits to {out_path} | "
+        f"skipped empty={skipped_empty}, already_canonical={skipped_already_canonical}, "
+        f"not_definitive={skipped_not_definitive}"
     )
+    if reasons:
+        print("  not_definitive by reason: " + ", ".join(f"{k}={v}" for k, v in reasons.most_common()))
 
-    # Optional: validate the file against the real CLI without applying changes.
     if dry_run:
         proc = subprocess.run(
             [
@@ -469,214 +878,7 @@ def write_genre_native(
         raise SystemExit(proc.returncode)
 
 
-def analyze(
-    export_path: Path,
-    taxonomy_path: Path,
-    aliases_path: Path,
-    out_dir: Path,
-    backup_home: bool,
-) -> None:
-    """Produce reports and bulk-update *tag* batches from an export.
-
-    Outputs (under ``out_dir``):
-
-    - ``genre_inventory.json`` — counts of raw genres/tags, tracks missing both genre and hierarchy tags.
-    - ``tracks_missing_genre.json`` — id/title/artist for those weak-signal tracks.
-    - ``taxonomy_paths.json`` — every flattened path as tag labels + human slug.
-    - ``genre_backup_bulk_update.json`` — current native genres (restore before bulk tag apply).
-    - ``uncertain_genres.json`` — tracks the matcher could not place confidently.
-    - ``batches/*.json`` + ``batches/all_confident.json`` — ``bulk-update`` payloads with ``id`` + ``tags``.
-    """
-    tracks = json.loads(export_path.read_text(encoding="utf-8"))
-    tree = json.loads(taxonomy_path.read_text(encoding="utf-8"))
-    aliases, exact_genres = _load_aliases(aliases_path)
-    paths = _collect_paths(tree)
-    by_token = _build_indices(paths)
-    top_level = _top_level_map(tree)
-
-    # --- Pass 1: inventory and "no genre signal" list ---
-    genre_counts: Counter[str] = Counter()
-    tag_counts: Counter[str] = Counter()
-    missing_signal: list[dict[str, Any]] = []
-
-    for t in tracks:
-        g = (t.get("genre") or "").strip()
-        if g:
-            genre_counts[g] += 1
-        tags = t.get("tags") or []
-        if isinstance(tags, list):
-            for tag in tags:
-                if isinstance(tag, str):
-                    tag_counts[tag] += 1
-        has_h = False
-        if isinstance(tags, list):
-            has_h = any(is_genre_hierarchy_label(x) for x in tags if isinstance(x, str))
-        if not g and not has_h:
-            missing_signal.append(
-                {
-                    "id": t.get("id"),
-                    "title": t.get("title"),
-                    "artist": t.get("artist"),
-                }
-            )
-
-    inventory = {
-        "track_count": len(tracks),
-        "unique_genres": len(genre_counts),
-        "genre_counts": dict(genre_counts.most_common()),
-        "unique_track_tags": len(tag_counts),
-        "tag_counts": dict(tag_counts.most_common(200)),
-        "tracks_empty_genre_no_hierarchy_tags": len(missing_signal),
-    }
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "genre_inventory.json").write_text(
-        json.dumps(inventory, indent=2), encoding="utf-8"
-    )
-    (out_dir / "tracks_missing_genre.json").write_text(
-        json.dumps(missing_signal, indent=2), encoding="utf-8"
-    )
-
-    # Reference file: all canonical tag triples (useful for spot-checking the tree walk).
-    flat = [{"tags": p.labels(), "path": p.slug()} for p in paths]
-    (out_dir / "taxonomy_paths.json").write_text(
-        json.dumps(flat, indent=2), encoding="utf-8"
-    )
-    print(
-        f"Wrote taxonomy with {len(paths)} leaf paths to {out_dir / 'taxonomy_paths.json'}"
-    )
-
-    # Backup native genres (bulk-update shape)
-    backup = [{"id": t["id"], "genre": (t.get("genre") or "").strip()} for t in tracks]
-    backup = [b for b in backup if b["genre"]]
-    backup_path = out_dir / "genre_backup_bulk_update.json"
-    backup_path.write_text(json.dumps(backup, indent=2), encoding="utf-8")
-    print(f"Wrote {len(backup)} genre backup rows to {backup_path}")
-
-    # Optional second copy in home directory (safer if ``out_dir`` is disposable).
-    if backup_home:
-        home_backup = (
-            Path.home() / f"lexicon-genre-backup-{date.today().isoformat()}.json"
-        )
-        home_backup.write_text(json.dumps(backup, indent=2), encoding="utf-8")
-        print(f"Wrote home backup {home_backup}")
-
-    # --- Pass 2: map each track; split into tag bulk-update rows vs. manual review ---
-    confident: list[dict[str, Any]] = []
-    uncertain: list[dict[str, Any]] = []
-
-    for t in tracks:
-        tid = t["id"]
-        g = (t.get("genre") or "").strip()
-        tag_labels = [x for x in (t.get("tags") or []) if isinstance(x, str)]
-        hierarchy_labels, conf, reason = match_genre_field(
-            g, paths, by_token, aliases, exact_genres, top_level
-        )
-
-        if not g:
-            continue  # analyze focuses on string cleanup; empty genre handled in inventory only
-
-        if hierarchy_labels is None:
-            uncertain.append(
-                {
-                    "id": tid,
-                    "title": t.get("title"),
-                    "artist": t.get("artist"),
-                    "albumTitle": t.get("albumTitle"),
-                    "genre": g,
-                    "tags": tag_labels,
-                    "confidence": conf,
-                    "reason": reason,
-                }
-            )
-            continue
-
-        if conf not in ("high", "medium"):
-            uncertain.append(
-                {
-                    "id": tid,
-                    "title": t.get("title"),
-                    "artist": t.get("artist"),
-                    "albumTitle": t.get("albumTitle"),
-                    "genre": g,
-                    "tags": tag_labels,
-                    "confidence": conf,
-                    "reason": reason,
-                }
-            )
-            continue
-
-        # Drop stale genre:* tags, add canonical hierarchy labels, dedupe.
-        kept = strip_genre_tags(tag_labels)
-        final_tags = sorted(set(kept + hierarchy_labels))
-        confident.append(
-            {
-                "id": tid,
-                "tags": final_tags,
-                "_source_genre": g,
-                "_confidence": conf,
-            }
-        )
-
-    (out_dir / "uncertain_genres.json").write_text(
-        json.dumps(uncertain, indent=2), encoding="utf-8"
-    )
-    print(f"Confident: {len(confident)}, uncertain: {len(uncertain)}")
-
-    batches_dir = out_dir / "batches"
-    batches_dir.mkdir(parents=True, exist_ok=True)
-
-    # Smaller files for human review: one JSON per top-level ``Genre:…`` bucket.
-    by_top: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in confident:
-        tags = row["tags"]
-        top = next((t for t in tags if t.startswith("Genre:")), "Genre:?")
-        by_top[top].append(row)
-
-    all_batch: list[dict[str, Any]] = []
-    for top, rows in sorted(by_top.items(), key=lambda x: x[0]):
-        # bulk-update expects minimal rows; debug fields stay only in per-source analysis JSON.
-        clean_rows = [{"id": r["id"], "tags": r["tags"]} for r in rows]
-        all_batch.extend(clean_rows)
-        safe = re.sub(r"[^a-zA-Z0-9]+", "_", top).strip("_") or "batch"
-        (batches_dir / f"{safe}.json").write_text(
-            json.dumps(clean_rows, indent=2), encoding="utf-8"
-        )
-
-    (batches_dir / "all_confident.json").write_text(
-        json.dumps(all_batch, indent=2), encoding="utf-8"
-    )
-    print(f"Wrote batches under {batches_dir} ({len(all_batch)} edits)")
-
-
-def ensure_categories(host: str | None, port: int | None) -> None:
-    """Connect to Lexicon and create hierarchy tag categories if missing.
-
-    Deferred imports keep the CLI importable without ``src`` on PYTHONPATH until
-    this command runs.
-    """
-    repo_root = SCRIPT_DIR.parent.parent
-    sys.path.insert(0, str(repo_root / "src"))
-    from lexicon.client import Lexicon
-    from lexicon.cli.tag_utils import TagResolver
-
-    client = Lexicon(host=host, port=port)
-    resolver = TagResolver(client)
-    for cat in ("Genre", "Sub-genre", "Sub-sub-genre"):
-        cid = resolver.get_category_id(cat)
-        if cid is not None:
-            print(f"Category {cat!r} already exists (id={cid})")
-            continue
-        created = client.tags.categories.add(cat)
-        if created and "id" in created:
-            print(f"Created category {cat!r} (id={created['id']})")
-        else:
-            print(f"Failed to create category {cat!r}", file=sys.stderr)
-            raise SystemExit(1)
-
-
-def dry_run_batch(repo_root: Path, batch_path: Path) -> int:
-    """Return exit code from ``lexicon bulk-update --dry-run`` (tags file)."""
+def dry_run_genre_batch(repo_root: Path, batch_path: Path) -> int:
     cmd = [
         "uv",
         "run",
@@ -685,7 +887,6 @@ def dry_run_batch(repo_root: Path, batch_path: Path) -> int:
         "--file",
         str(batch_path),
         "--dry-run",
-        "--create-tags",
         "--output-format",
         "summary",
     ]
@@ -693,37 +894,34 @@ def dry_run_batch(repo_root: Path, batch_path: Path) -> int:
     return proc.returncode
 
 
-class Confidence(str, Enum):
-    """Filter for write-genre-native: how strict to be about matcher confidence."""
-
-    high = "high"
-    all = "all"
-
-
 # ---------------------------------------------------------------------------
-# Typer CLI entrypoints (thin wrappers)
+# CLI
 # ---------------------------------------------------------------------------
 
 
 @app.command("export")
 def cmd_export(
-    output: Path = typer.Option(
-        OUTPUT_DIR / "export.json",
-        "-o",
-        "--output",
-        help="Output path",
+    out_dir: Path = typer.Option(
+        OUTPUT_DIR,
+        "--out-dir",
+        help="Directory for export.json and backup JSON files",
+    ),
+    backup_home: bool = typer.Option(
+        False,
+        "--backup-home",
+        help="Also copy backup JSON files under ~/lexicon-genre-backup-YYYY-MM-DD/",
     ),
 ) -> None:
-    """Run list-tracks and save JSON."""
-    run_lexicon_export(REPO_ROOT, output)
+    """Export library + genre/tags bulk-update backups."""
+    run_export(REPO_ROOT, out_dir, backup_home=backup_home)
 
 
-@app.command("analyze")
-def cmd_analyze(
+@app.command("map-genres")
+def cmd_map_genres(
     export_path: Path = typer.Option(
         ...,
         "--export",
-        help="Path to library export JSON",
+        help="Path to export.json",
         exists=True,
         file_okay=True,
         dir_okay=False,
@@ -732,23 +930,66 @@ def cmd_analyze(
     taxonomy: Path = typer.Option(DEFAULT_TAXONOMY, "--taxonomy"),
     aliases: Path = typer.Option(DEFAULT_ALIASES, "--aliases"),
     out_dir: Path = typer.Option(OUTPUT_DIR, "--out-dir"),
-    backup_home: bool = typer.Option(
+    review_json: bool = typer.Option(
         False,
-        "--backup-home",
-        help=f"Also write ~/lexicon-genre-backup-{date.today().isoformat()}.json",
+        "--review-json",
+        help="Also write needs_review.json",
     ),
 ) -> None:
-    """Build inventory, backup, batches from export."""
-    analyze(export_path, taxonomy, aliases, out_dir, backup_home)
+    """Inventory + taxonomy paths + needs_review.md from export."""
+    map_genres(export_path, taxonomy, aliases, out_dir, write_review_json=review_json)
 
 
-@app.command("ensure-categories")
-def cmd_ensure_categories(
-    host: str | None = typer.Option(None, "--host"),
-    port: int | None = typer.Option(None, "--port"),
+@app.command("review-genres")
+def cmd_review_genres(
+    export_path: Path = typer.Option(
+        ...,
+        "--export",
+        help="Path to export.json",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    taxonomy: Path = typer.Option(DEFAULT_TAXONOMY, "--taxonomy"),
+    aliases: Path = typer.Option(DEFAULT_ALIASES, "--aliases"),
 ) -> None:
-    """Create Genre tag categories via API."""
-    ensure_categories(host, port)
+    """Interactive TUI to resolve genres and update genre_aliases.json (InquirerPy)."""
+    review_genres_interactive(export_path, taxonomy, aliases)
+
+
+@app.command("write-genres")
+def cmd_write_genres(
+    export_path: Path = typer.Option(
+        ...,
+        "--export",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    taxonomy: Path = typer.Option(DEFAULT_TAXONOMY, "--taxonomy"),
+    aliases: Path = typer.Option(DEFAULT_ALIASES, "--aliases"),
+    output: Path = typer.Option(
+        OUTPUT_DIR / "bulk_update_genres.json",
+        "-o",
+        "--output",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="After writing file, run lexicon bulk-update --dry-run",
+    ),
+) -> None:
+    """Write bulk-update JSON: native genre only for definitive mappings."""
+    write_genres(
+        export_path,
+        taxonomy,
+        aliases,
+        output,
+        dry_run=dry_run,
+        repo_root=REPO_ROOT,
+    )
 
 
 @app.command("dry-run")
@@ -762,49 +1003,8 @@ def cmd_dry_run(
         readable=True,
     ),
 ) -> None:
-    """Run lexicon bulk-update --dry-run on a batch file."""
-    raise SystemExit(dry_run_batch(REPO_ROOT, batch))
-
-
-@app.command("write-genre-native")
-def cmd_write_genre_native(
-    export_path: Path = typer.Option(
-        ...,
-        "--export",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
-    ),
-    taxonomy: Path = typer.Option(DEFAULT_TAXONOMY, "--taxonomy"),
-    aliases: Path = typer.Option(DEFAULT_ALIASES, "--aliases"),
-    output: Path = typer.Option(
-        OUTPUT_DIR / "bulk_update_genre_native_field.json",
-        "-o",
-        "--output",
-        help="bulk-update JSON output path",
-    ),
-    confidence: Confidence = typer.Option(
-        Confidence.high,
-        "--confidence",
-        help="'high' = only high confidence (default); 'all' = high and medium",
-    ),
-    dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="After writing file, run lexicon bulk-update --dry-run",
-    ),
-) -> None:
-    """Write bulk-update JSON: native genre as Genre > Sub-genre > Sub-sub-genre."""
-    write_genre_native(
-        export_path,
-        taxonomy,
-        aliases,
-        output,
-        confidence.value,
-        dry_run=dry_run,
-        repo_root=REPO_ROOT,
-    )
+    """Run lexicon bulk-update --dry-run on a genre bulk file."""
+    raise SystemExit(dry_run_genre_batch(REPO_ROOT, batch))
 
 
 def main() -> None:

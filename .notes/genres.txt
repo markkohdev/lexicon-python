@@ -1,9 +1,9 @@
-Ambient & downtempo
+Electronica
   Ambient / Experimental
   Asian Electronic
   Chillwave
   Downtempo
-  Electronica
+  Trip Hop
   Lo-Fi
 Bass
   Future Bass
@@ -20,6 +20,7 @@ Breakbeat
     Melodic Dubstep
     OG Dubstep
     Riddim
+  Electro Soul
   Glitch Hop
   Hip-Hop
     East Coast
@@ -33,7 +34,6 @@ Breakbeat
     Southern
     West Coast
   Trap
-  Trip Hop
 DJ Tools
   Acapellas
   Battle Tools
@@ -45,16 +45,10 @@ Electro
   Electro Swing
   French Touch
   Indie Dance
-Funk / Soul / Jazz / R&B
+Funk
   Disco
     Nu Disco
-  Funk
-    Jazz Funk
-  Jazz
-    Acid Jazz
-    Nu Jazz
-  R&B
-  Soul
+  Jazz Funk
 Global / World
   African
     Afro R&B
@@ -104,11 +98,15 @@ House
   Tech House
     Latin Tech
   Tropical House
+Jazz
+  Acid Jazz
+  Nu Jazz
 Pop
   American Pop
   Baroque Pop
   Dance Pop
   Holiday
+R&B
 Reggae / Dancehall
   Caribbean
     Calypso
@@ -123,6 +121,7 @@ Rock
   Punk
     Pop Punk
     Ska Punk
+Soul
 Techno
   Deep
   Driving
