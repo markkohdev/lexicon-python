@@ -35,7 +35,9 @@ def list_tags(
     if output_format == "json":
         tags_raw = client.tags.list() or []
         categories_raw = client.tags.categories.list() or []
-        typer.echo(json.dumps({"categories": categories_raw, "tags": tags_raw}, indent=2))
+        typer.echo(
+            json.dumps({"categories": categories_raw, "tags": tags_raw}, indent=2)
+        )
         return
 
     grouped = resolver.get_all_tags()
@@ -56,7 +58,9 @@ def list_tags(
         if not first:
             typer.echo()
         first = False
-        typer.echo(f"{cat_label} ({len(tag_labels)} tag{'s' if len(tag_labels) != 1 else ''}):")
+        typer.echo(
+            f"{cat_label} ({len(tag_labels)} tag{'s' if len(tag_labels) != 1 else ''}):"
+        )
         for tag_label in tag_labels:
             typer.echo(f"  {tag_label}")
 
@@ -107,7 +111,9 @@ def create_tag(
     cat_id = resolver.get_category_id(cat_part)
     if cat_id is None:
         if not yes:
-            confirmed = typer.confirm(f"Category '{cat_part}' does not exist. Create it?")
+            confirmed = typer.confirm(
+                f"Category '{cat_part}' does not exist. Create it?"
+            )
             if not confirmed:
                 typer.echo("Aborted.")
                 raise typer.Exit(1)
@@ -137,7 +143,10 @@ def update_tag(
     ] = None,
     category: Annotated[
         str | None,
-        typer.Option("--category", help="Move tag to this category (by label; created if missing with --yes)"),
+        typer.Option(
+            "--category",
+            help="Move tag to this category (by label; created if missing with --yes)",
+        ),
     ] = None,
     yes: Annotated[
         bool,

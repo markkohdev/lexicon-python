@@ -1,0 +1,334 @@
+[
+  {
+    "genre": "Legacy Beatport Genres",
+    "sub-genres": []
+  },
+  {
+    "genre": "140 / Deep Dubstep / Grime",
+    "sub-genres": [
+      "Grime"
+    ]
+  },
+  {
+    "genre": "Afro House",
+    "sub-genres": [
+      "Afro / Latin",
+      "3Step",
+      "Afro Melodic"
+    ]
+  },
+  {
+    "genre": "Amapiano",
+    "sub-genres": []
+  },
+  {
+    "genre": "Ambient / Experimental",
+    "sub-genres": []
+  },
+  {
+    "genre": "Bass / Club",
+    "sub-genres": [
+      "Juke / Footwork",
+      "Global Club",
+      "Jersey Club",
+      "Gqom",
+      "Bass / Club",
+      "Reggae / Dancehall",
+      "UK Funky",
+      "Raptor House"
+    ]
+  },
+  {
+    "genre": "Bass House",
+    "sub-genres": []
+  },
+  {
+    "genre": "Brazilian Funk",
+    "sub-genres": [
+      "Carioca Funk",
+      "Mandelao Funk",
+      "BH Funk",
+      "Melodic Funk",
+      "Eletrofunk"
+    ]
+  },
+  {
+    "genre": "Breaks / Breakbeat / UK Bass",
+    "sub-genres": [
+      "Glitch Hop"
+    ]
+  },
+  {
+    "genre": "Dance / Pop",
+    "sub-genres": [
+      "Pop",
+      "Tropical House",
+      "Afro Pop"
+    ]
+  },
+  {
+    "genre": "Deep House",
+    "sub-genres": []
+  },
+  {
+    "genre": "DJ Tools",
+    "sub-genres": [
+      "Loops",
+      "Acapellas",
+      "Battle Tools"
+    ]
+  },
+  {
+    "genre": "Downtempo",
+    "sub-genres": []
+  },
+  {
+    "genre": "Drum & Bass",
+    "sub-genres": [
+      "Liquid",
+      "Jump Up",
+      "Jungle",
+      "Deep",
+      "Halftime"
+    ]
+  },
+  {
+    "genre": "Dubstep",
+    "sub-genres": [
+      "Melodic Dubstep",
+      "Midtempo"
+    ]
+  },
+  {
+    "genre": "Electro (Classic / Detroit / Modern)",
+    "sub-genres": []
+  },
+  {
+    "genre": "Electronica",
+    "sub-genres": []
+  },
+  {
+    "genre": "Funky House",
+    "sub-genres": []
+  },
+  {
+    "genre": "Hard Dance / Hardcore / Neo Rave",
+    "sub-genres": [
+      "Hardstyle",
+      "Hard House",
+      "Uptempo",
+      "Terror",
+      "UK / Happy Hardcore",
+      "Frenchcore",
+      "Neo Rave"
+    ]
+  },
+  {
+    "genre": "Hard Techno",
+    "sub-genres": []
+  },
+  {
+    "genre": "House",
+    "sub-genres": [
+      "Acid",
+      "Soulful",
+      "Latin House"
+    ]
+  },
+  {
+    "genre": "Indie Dance",
+    "sub-genres": [
+      "Dark Disco"
+    ]
+  },
+  {
+    "genre": "Jackin House",
+    "sub-genres": []
+  },
+  {
+    "genre": "Mainstage",
+    "sub-genres": [
+      "Big Room",
+      "Electro House",
+      "Future House",
+      "Speed House",
+      "Future Rave"
+    ]
+  },
+  {
+    "genre": "Melodic House & Techno",
+    "sub-genres": [
+      "Melodic House",
+      "Melodic Techno"
+    ]
+  },
+  {
+    "genre": "Minimal / Deep Tech",
+    "sub-genres": [
+      "Bounce",
+      "Deep Tech",
+      "Minimal House"
+    ]
+  },
+  {
+    "genre": "Nu Disco / Disco",
+    "sub-genres": [
+      "Funk / Soul",
+      "Italo"
+    ]
+  },
+  {
+    "genre": "Organic House",
+    "sub-genres": []
+  },
+  {
+    "genre": "Progressive House",
+    "sub-genres": []
+  },
+  {
+    "genre": "Psy-Trance",
+    "sub-genres": [
+      "Full-On",
+      "Progressive Psy",
+      "Psychedelic",
+      "Goa Trance",
+      "Dark & Forest",
+      "Psycore & H-Tech"
+    ]
+  },
+  {
+    "genre": "Tech House",
+    "sub-genres": [
+      "Latin Tech"
+    ]
+  },
+  {
+    "genre": "Techno (Peak Time / Driving)",
+    "sub-genres": [
+      "Peak Time",
+      "Driving",
+      "Psy-Techno"
+    ]
+  },
+  {
+    "genre": "Techno (Raw / Deep / Hypnotic)",
+    "sub-genres": [
+      "Deep / Hypnotic",
+      "Raw",
+      "EBM",
+      "Dub",
+      "Broken"
+    ]
+  },
+  {
+    "genre": "Trance (Main Floor)",
+    "sub-genres": [
+      "Progressive Trance",
+      "Tech Trance",
+      "Hard Trance",
+      "Uplifting Trance",
+      "Vocal Trance"
+    ]
+  },
+  {
+    "genre": "Trance (Raw / Deep / Hypnotic)",
+    "sub-genres": [
+      "Raw Trance",
+      "Deep Trance",
+      "Hypnotic Trance"
+    ]
+  },
+  {
+    "genre": "Trap / Future Bass",
+    "sub-genres": [
+      "Trap"
+    ]
+  },
+  {
+    "genre": "UK Garage / Bassline",
+    "sub-genres": [
+      "UK Garage",
+      "Bassline",
+      "2-Step",
+      "Speed Garage"
+    ]
+  },
+  {
+    "genre": "NEW Open Format Genres",
+    "sub-genres": []
+  },
+  {
+    "genre": "Hip-Hop",
+    "sub-genres": [
+      "East Coast",
+      "West Coast",
+      "Global",
+      "Southern"
+    ]
+  },
+  {
+    "genre": "Pop",
+    "sub-genres": [
+      "K-Pop",
+      "J-Pop",
+      "Holiday"
+    ]
+  },
+  {
+    "genre": "R&B",
+    "sub-genres": [
+      "Funk",
+      "Soul"
+    ]
+  },
+  {
+    "genre": "Latin",
+    "sub-genres": [
+      "Cumbia",
+      "Salsa",
+      "Merengue",
+      "Reggaeton",
+      "Dembow",
+      "Regional Mexican",
+      "Bachata",
+      "Latin Dance",
+      "Latin Pop",
+      "Latin Hip-Hop"
+    ]
+  },
+  {
+    "genre": "African",
+    "sub-genres": [
+      "Afrobeats",
+      "Afropop",
+      "Afro R&B",
+      "Alte"
+    ]
+  },
+  {
+    "genre": "Caribbean",
+    "sub-genres": [
+      "Reggae",
+      "Dancehall",
+      "Soca",
+      "Calypso",
+      "Ska & Rocksteady"
+    ]
+  },
+  {
+    "genre": "Rock",
+    "sub-genres": [
+      "Indie Rock",
+      "Metal",
+      "Punk & Pop Punk",
+      "Ska"
+    ]
+  },
+  {
+    "genre": "Country",
+    "sub-genres": [
+      "Country Pop",
+      "Country Dance"
+    ]
+  }
+]

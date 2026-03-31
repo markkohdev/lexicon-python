@@ -41,3 +41,6 @@ ref/*
 
 # Cursor
 .cursor/plans/
+
+# Genre cleanup generated exports / batches
+scripts/genre_taxonomy/output/

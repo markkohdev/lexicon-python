@@ -31,8 +31,12 @@ class TagResolver:
         tags = self._client.tags.list() or []
         categories = self._client.tags.categories.list() or []
 
-        self._category_id_to_label = {c["id"]: c["label"] for c in categories if "id" in c and "label" in c}
-        self._category_label_to_id = {label.lower(): cid for cid, label in self._category_id_to_label.items()}
+        self._category_id_to_label = {
+            c["id"]: c["label"] for c in categories if "id" in c and "label" in c
+        }
+        self._category_label_to_id = {
+            label.lower(): cid for cid, label in self._category_id_to_label.items()
+        }
 
         self._id_to_label = {}
         self._label_to_id = {}
@@ -163,17 +167,13 @@ class TagResolver:
 
         for label in labels:
             if ":" not in label:
-                raise ValueError(
-                    f"Tag must be in 'Category:Label' format: {label!r}"
-                )
+                raise ValueError(f"Tag must be in 'Category:Label' format: {label!r}")
 
             cat_part, tag_part = label.split(":", 1)
             cat_part = cat_part.strip()
             tag_part = tag_part.strip()
             if not cat_part or not tag_part:
-                raise ValueError(
-                    f"Tag must be in 'Category:Label' format: {label!r}"
-                )
+                raise ValueError(f"Tag must be in 'Category:Label' format: {label!r}")
 
             existing_id = self._label_to_id.get(f"{cat_part}:{tag_part}".lower())
             if existing_id is not None:
@@ -194,9 +194,7 @@ class TagResolver:
             if cat_id is None:
                 if not auto_create and confirm_fn is not None:
                     if not confirm_fn(f"Create new category '{cat_part}'?"):
-                        raise ValueError(
-                            f"Category creation declined for {cat_part!r}"
-                        )
+                        raise ValueError(f"Category creation declined for {cat_part!r}")
                 new_cat = self._client.tags.categories.add(cat_part)
                 if new_cat is None or "id" not in new_cat:
                     raise ValueError(f"Failed to create category {cat_part!r}")

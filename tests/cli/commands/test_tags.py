@@ -108,7 +108,9 @@ class TestCreateTag(unittest.TestCase):
     @patch("lexicon.cli.commands.tags.Lexicon")
     def test_create_new_tag_new_category_declined(self, mock_lexicon_class):
         mock_lexicon_class.return_value = _mock_client()
-        result = self.runner.invoke(app, ["create-tag", "--tag", "Vibe:Dark"], input="n\n")
+        result = self.runner.invoke(
+            app, ["create-tag", "--tag", "Vibe:Dark"], input="n\n"
+        )
         assert result.exit_code == 1
         assert "Aborted" in result.stdout
 
@@ -143,7 +145,11 @@ class TestUpdateTag(unittest.TestCase):
     @patch("lexicon.cli.commands.tags.Lexicon")
     def test_update_label(self, mock_lexicon_class):
         client = _mock_client()
-        client.tags.update.return_value = {"id": 1, "label": "Deep House", "categoryId": 10}
+        client.tags.update.return_value = {
+            "id": 1,
+            "label": "Deep House",
+            "categoryId": 10,
+        }
         mock_lexicon_class.return_value = client
         result = self.runner.invoke(
             app, ["update-tag", "--tag", "Genre:House", "--label", "Deep House"]
@@ -217,7 +223,9 @@ class TestDeleteTag(unittest.TestCase):
         client = _mock_client()
         client.tags.delete.return_value = True
         mock_lexicon_class.return_value = client
-        result = self.runner.invoke(app, ["delete-tag", "--tag", "Genre:House", "--yes"])
+        result = self.runner.invoke(
+            app, ["delete-tag", "--tag", "Genre:House", "--yes"]
+        )
         assert result.exit_code == 0
         assert "Deleted tag 'Genre:House'" in result.stdout
         client.tags.delete.assert_called_once_with(1)
@@ -245,9 +253,7 @@ class TestDeleteTag(unittest.TestCase):
     @patch("lexicon.cli.commands.tags.Lexicon")
     def test_delete_not_found(self, mock_lexicon_class):
         mock_lexicon_class.return_value = _mock_client()
-        result = self.runner.invoke(
-            app, ["delete-tag", "--tag", "Nope:Nada", "--yes"]
-        )
+        result = self.runner.invoke(app, ["delete-tag", "--tag", "Nope:Nada", "--yes"])
         assert result.exit_code == 1
         assert "not found" in result.output
 
@@ -261,6 +267,8 @@ class TestDeleteTag(unittest.TestCase):
         client = _mock_client()
         client.tags.delete.return_value = False
         mock_lexicon_class.return_value = client
-        result = self.runner.invoke(app, ["delete-tag", "--tag", "Genre:House", "--yes"])
+        result = self.runner.invoke(
+            app, ["delete-tag", "--tag", "Genre:House", "--yes"]
+        )
         assert result.exit_code == 1
         assert "failed to delete" in result.output

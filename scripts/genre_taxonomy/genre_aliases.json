@@ -1,0 +1,95 @@
+{
+  "exact_genres": {
+    "nu disco / disco": [
+      "Genre:Funk / Soul / Jazz / R&B",
+      "Sub-genre:Disco",
+      "Sub-sub-genre:Nu Disco"
+    ],
+    "trap / future bass": [
+      "Genre:Bass",
+      "Sub-genre:Future Bass",
+      "Sub-sub-genre:Trap"
+    ],
+    "minimal/tech house": [
+      "Genre:House",
+      "Sub-genre:Tech House"
+    ],
+    "minimal / tech house": [
+      "Genre:House",
+      "Sub-genre:Tech House"
+    ],
+    "melodic house & techno": [
+      "Genre:House",
+      "Sub-genre:Melodic House"
+    ],
+    "funk/disco/jazz": [
+      "Genre:Funk / Soul / Jazz / R&B",
+      "Sub-genre:Funk"
+    ],
+    "breaks / breakbeat / uk bass": [
+      "Genre:Bass"
+    ],
+    "electro hip-hop soul": [
+      "Genre:Hip-Hop",
+      "Sub-genre:Global"
+    ]
+  },
+  "aliases": {
+    "electronic": "Electronica",
+    "electronica": "Electronica",
+    "dnb": "Drum & Bass",
+    "drum and bass": "Drum & Bass",
+    "drum n bass": "Drum & Bass",
+    "drum'n'bass": "Drum & Bass",
+    "techhouse": "Tech House",
+    "tech-house": "Tech House",
+    "tech house": "Tech House",
+    "deep house": "Deep House",
+    "deephouse": "Deep House",
+    "prog house": "Progressive House",
+    "progressive house": "Progressive House",
+    "melodic house": "Melodic House",
+    "melodic techno": "Melodic Techno",
+    "ukg": "UK Garage",
+    "uk garage": "UK Garage",
+    "future bass": "Future Bass",
+    "electro house": "Electro House",
+    "big room": "Big Room",
+    "bigroom": "Big Room",
+    "psy trance": "Psy-Trance",
+    "psy-trance": "Psy-Trance",
+    "uplifting": "Uplifting Trance",
+    "vocal trance": "Vocal Trance",
+    "progressive trance": "Progressive Trance",
+    "hard techno": "Hard Techno",
+    "peak time": "Driving",
+    "peak-time": "Driving",
+    "afro house": "Afro House",
+    "organic house": "Organic House",
+    "dance pop": "Dance Pop",
+    "hip hop": "Hip-Hop",
+    "hip-hop": "Hip-Hop",
+    "hiphop": "Hip-Hop",
+    "r&b": "R&B",
+    "rnb": "R&B",
+    "dancehall": "Dancehall",
+    "nu disco": "Nu Disco",
+    "nudisco": "Nu Disco",
+    "indie dance": "Indie Dance",
+    "indie-dance": "Indie Dance",
+    "bass house": "Bass House",
+    "speed garage": "Speed Garage",
+    "2-step": "2-Step",
+    "2step": "2-Step",
+    "uk funky": "UK Garage",
+    "melodic dubstep": "Melodic Dubstep",
+    "jump up": "Jump Up",
+    "jump-up": "Jump Up",
+    "liquid dnb": "Liquid",
+    "liquid funk": "Liquid",
+    "ambient": "Ambient / Experimental",
+    "breakbeat": "Bass",
+    "lowtemp": "Future Funk",
+    "low temp": "Future Funk"
+  }
+}

@@ -1230,7 +1230,11 @@ class TestBulkUpdate(unittest.TestCase):
         mock_client.tags.categories.list.return_value = [
             {"id": 10, "label": "Genre", "tags": [1]},
         ]
-        mock_client.tags.add.return_value = {"id": 50, "label": "Chill", "categoryId": 10}
+        mock_client.tags.add.return_value = {
+            "id": 50,
+            "label": "Chill",
+            "categoryId": 10,
+        }
         mock_client.tracks.update.return_value = {"id": 1, "tags": [1, 50]}
         mock_lexicon_class.return_value = mock_client
 
@@ -1282,9 +1286,7 @@ class TestTrackTagResolution(unittest.TestCase):
         mock_client.tags.categories.list.return_value = SAMPLE_CATEGORIES_FOR_TRACKS
         mock_lexicon_class.return_value = mock_client
 
-        result = self.runner.invoke(
-            app, ["list-tracks", "-f", "title", "-f", "tags"]
-        )
+        result = self.runner.invoke(app, ["list-tracks", "-f", "title", "-f", "tags"])
         assert result.exit_code == 0
         assert "Genre:House" in result.stdout
         assert "Mood:Chill" in result.stdout
@@ -1340,9 +1342,7 @@ class TestTrackTagResolution(unittest.TestCase):
         ]
         mock_lexicon_class.return_value = mock_client
 
-        result = self.runner.invoke(
-            app, ["list-tracks", "-f", "title", "-f", "artist"]
-        )
+        result = self.runner.invoke(app, ["list-tracks", "-f", "title", "-f", "artist"])
         assert result.exit_code == 0
         mock_client.tags.list.assert_not_called()
 
@@ -1368,7 +1368,7 @@ class TestUpdateTrackWithTags(unittest.TestCase):
                 "--id",
                 "100",
                 "--set",
-                'tags=Genre:House, Mood:Chill',
+                "tags=Genre:House, Mood:Chill",
                 "--create-tags",
             ],
         )
@@ -1414,7 +1414,7 @@ class TestUpdateTrackWithTags(unittest.TestCase):
                 "--id",
                 "100",
                 "--set",
-                'tags=NewCat:NewTag',
+                "tags=NewCat:NewTag",
             ],
             input="n\n",
         )
