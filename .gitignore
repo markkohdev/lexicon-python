@@ -44,3 +44,4 @@ ref/*
 
 # Genre cleanup generated exports / batches
 scripts/genre_taxonomy/output/
+exports/
